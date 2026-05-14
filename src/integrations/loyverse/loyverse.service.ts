@@ -2,8 +2,10 @@
 import { LoyverseClient } from './loyverse.client';
 import { LoyverseItem, LoyverseCategory, LoyverseSyncResult } from './loyverse.types';
 
-// Import Supabase (compatible with your current JS config)
 const { supabase } = require('../../config/supabase');
+
+const ITEMS_LIMIT = 250;
+const CATEGORIES_LIMIT = 100;
 
 export class LoyverseService {
     private client: LoyverseClient;
@@ -12,33 +14,25 @@ export class LoyverseService {
         this.client = new LoyverseClient();
     }
 
-    /**
-     * Fetch ALL items with full pagination support
-     */
     private async fetchAllItems(): Promise<LoyverseItem[]> {
         let allItems: LoyverseItem[] = [];
         let cursor: string | undefined;
 
         do {
-            const response = await this.client.getItems(cursor, 250);
+            const response = await this.client.getItems(cursor, ITEMS_LIMIT);
             allItems = [...allItems, ...response.items];
             cursor = response.cursor;
-
-            console.log(`📦 Fetched ${response.items.length} items | Total: ${allItems.length}`);
         } while (cursor);
 
         return allItems;
     }
 
-    /**
-     * Fetch ALL categories with pagination
-     */
     private async fetchAllCategories(): Promise<LoyverseCategory[]> {
         let allCategories: LoyverseCategory[] = [];
         let cursor: string | undefined;
 
         do {
-            const response = await this.client.getCategories(cursor, 100);
+            const response = await this.client.getCategories(cursor, CATEGORIES_LIMIT);
             allCategories = [...allCategories, ...response.categories];
             cursor = response.cursor;
         } while (cursor);
@@ -46,9 +40,6 @@ export class LoyverseService {
         return allCategories;
     }
 
-    /**
-     * Save Categories
-     */
     private async saveCategories(categories: LoyverseCategory[]): Promise<void> {
         if (categories.length === 0) return;
 
@@ -65,17 +56,9 @@ export class LoyverseService {
             .from('loyverse_categories')
             .upsert(data, { onConflict: 'id' });
 
-        if (error) {
-            console.error('❌ Error saving categories:', error);
-            throw error;
-        }
-
-        console.log(`✅ Synced ${data.length} categories`);
+        if (error) throw error;
     }
 
-    /**
-     * Save Items + Variants
-     */
     private async saveItems(items: LoyverseItem[]): Promise<void> {
         if (items.length === 0) return;
 
@@ -114,23 +97,15 @@ export class LoyverseService {
             });
         });
 
-        // Upsert both tables
         await Promise.all([
             supabase.from('loyverse_items').upsert(itemsData, { onConflict: 'id' }),
             variantsData.length > 0
                 ? supabase.from('loyverse_variants').upsert(variantsData, { onConflict: 'variant_id' })
                 : Promise.resolve()
         ]);
-
-        console.log(`✅ Synced ${itemsData.length} items and ${variantsData.length} variants`);
     }
 
-    /**
-     * Main Sync Function
-     */
     async syncMenu(): Promise<LoyverseSyncResult> {
-        console.log('🚀 Starting Loyverse Menu Sync...');
-
         try {
             const [items, categories] = await Promise.all([
                 this.fetchAllItems(),
@@ -142,7 +117,7 @@ export class LoyverseService {
                 this.saveItems(items)
             ]);
 
-            const result: LoyverseSyncResult = {
+            return {
                 success: true,
                 itemsCount: items.length,
                 categoriesCount: categories.length,
@@ -150,15 +125,11 @@ export class LoyverseService {
                 message: `Successfully synced ${items.length} items and ${categories.length} categories`
             };
 
-            console.log('🎉 Loyverse Menu Sync Completed Successfully!', result);
-            return result;
-
         } catch (error: any) {
-            console.error('❌ Loyverse Menu Sync Failed:', error.message);
+            console.error('Loyverse Menu Sync Failed:', error.message);
             throw error;
         }
     }
 }
 
-// Export singleton
 export const loyverseService = new LoyverseService();

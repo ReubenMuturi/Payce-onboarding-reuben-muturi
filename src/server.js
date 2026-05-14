@@ -3,10 +3,6 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 
-// Import services
-const { loyverseService } = require('./integrations/loyverse/loyverse.service');
-const { supabase } = require('./config/supabase');
-
 dotenv.config();
 
 const app = express();
@@ -30,6 +26,8 @@ app.get('/', (req, res) => {
 // Public Menu Endpoint
 app.get('/api/menu', async (req, res) => {
     try {
+        const { supabase } = require('./config/supabase');
+
         const { data: items, error } = await supabase
             .from('loyverse_items')
             .select(`
@@ -41,10 +39,7 @@ app.get('/api/menu', async (req, res) => {
 
         if (error) {
             console.error('Supabase Error fetching menu:', error);
-            return res.status(500).json({
-                success: false,
-                message: "Failed to fetch menu"
-            });
+            return res.status(500).json({ success: false, message: "Failed to fetch menu" });
         }
 
         res.json({
@@ -56,10 +51,7 @@ app.get('/api/menu', async (req, res) => {
 
     } catch (error) {
         console.error('Error in /api/menu:', error);
-        res.status(500).json({
-            success: false,
-            message: "Internal server error"
-        });
+        res.status(500).json({ success: false, message: "Internal server error" });
     }
 });
 
@@ -67,6 +59,10 @@ app.get('/api/menu', async (req, res) => {
 app.post('/api/sync/loyverse', async (req, res) => {
     try {
         console.log('Manual Loyverse menu sync requested');
+
+        // Dynamic import for TypeScript module
+        const { loyverseService } = await import('./integrations/loyverse/loyverse.service.js');
+
         const result = await loyverseService.syncMenu();
 
         res.json({
@@ -95,6 +91,6 @@ app.use((req, res) => {
 // Start Server
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
-    console.log(`GET  /api/menu`);
-    console.log(`POST /api/sync/loyverse`);
+    console.log(`→ GET  /api/menu`);
+    console.log(`→ POST /api/sync/loyverse`);
 });

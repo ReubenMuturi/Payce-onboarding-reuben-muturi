@@ -1,7 +1,4 @@
 // src/server.js
-// ================================================
-// Payce Dummy Backend - Main Server File
-// ================================================
 // Purpose: This is the entry point of the backend.
 // It sets up the Express server, middleware, and all API routes.
 
@@ -104,6 +101,32 @@ app.post('/api/sync/loyverse', async (req, res) => {
             success: false,
             message: "Menu synchronization failed",
             error: error.message
+        });
+    }
+});
+
+// ====================== LOYVERSE WEBHOOK ENDPOINT ======================
+const { loyverseWebhookService } = require('./services/loyverse-webhook.service');
+
+// Receive webhooks from Loyverse
+app.post('/webhooks/loyverse', async (req, res) => {
+    try {
+        const payload = req.body;
+
+        const result = await loyverseWebhookService.handleWebhook(payload);
+
+        // Always return 200 OK to acknowledge receipt (important for webhooks)
+        res.status(200).json({
+            success: true,
+            message: "Webhook received successfully"
+        });
+
+    } catch (error) {
+        console.error('Webhook handler error:', error);
+        // Still return 200 to prevent Loyverse from retrying endlessly
+        res.status(200).json({
+            success: false,
+            message: "Webhook received but processing failed"
         });
     }
 });

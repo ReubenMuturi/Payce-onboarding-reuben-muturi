@@ -1,15 +1,17 @@
 // src/features/payment/AmwalPaymentButton.tsx
-import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import React, { useState, useEffect, useCallback } from 'react';
+import { loadSmartBoxScript } from '../../lib/amwal';
+import { InitiatePaymentResponse } from '../../types/payment.types';
 
 interface AmwalPaymentButtonProps {
     billId: string;
     amount: number;
     userId?: string;
     onSuccess?: (data: any) => void;
-    onError?: (error: any) => void;
+    onError?: (error: Error | unknown) => void;
     onCancel?: () => void;
     children?: React.ReactNode;
+    className?: string;
 }
 
 declare global {
@@ -29,66 +31,80 @@ export const AmwalPaymentButton: React.FC<AmwalPaymentButtonProps> = ({
                                                                           onError,
                                                                           onCancel,
                                                                           children = "Pay Now",
+                                                                          className = "",
                                                                       }) => {
-    const [loading, setLoading] = useState(false);
+    const [loading, setLoading] = useState<boolean>(false);
 
+    // Setup global callbacks for SmartBox
     useEffect(() => {
-        // Setup global callbacks for SmartBox
         window.handleAmwalPaymentComplete = (data: any) => {
-            console.log('Payment Complete:', data);
-            onSuccess?.(data);
             setLoading(false);
+            onSuccess?.(data);
         };
 
         window.handleAmwalPaymentError = (data: any) => {
-            console.error('Payment Error:', data);
-            onError?.(data);
             setLoading(false);
+            onError?.(data);
         };
 
         window.handleAmwalPaymentCancel = () => {
-            console.log('Payment Cancelled');
-            onCancel?.();
             setLoading(false);
+            onCancel?.();
         };
 
-        // Cleanup
         return () => {
-            delete (window as any).handleAmwalPaymentComplete;
-            delete (window as any).handleAmwalPaymentError;
-            delete (window as any).handleAmwalPaymentCancel;
+            delete window.handleAmwalPaymentComplete;
+            delete window.handleAmwalPaymentError;
+            delete window.handleAmwalPaymentCancel;
         };
     }, [onSuccess, onError, onCancel]);
 
-    const handlePayment = async () => {
+    const handlePayment = useCallback(async () => {
+        if (loading) return;
+
         setLoading(true);
 
         try {
-            const response = await axios.post('/api/payments/initiate', {
-                billId,
-                amount,
-                userId,
+            await loadSmartBoxScript();
+
+            const response = await fetch('/api/payments/initiate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ billId, amount, userId }),
             });
 
-            const { config } = response.data.data;
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.error || 'Failed to initiate payment');
+            }
+
+            const { config } = result.data as InitiatePaymentResponse;
+
+            if (!window.SmartBox?.Checkout) {
+                throw new Error('SmartBox not loaded. Please refresh the page.');
+            }
 
             window.SmartBox.Checkout.configure = config;
             window.SmartBox.Checkout.showSmartBox();
 
-        } catch (error: any) {
-            console.error('Failed to initiate payment:', error);
-            onError?.(error.response?.data || error);
+        } catch (error: unknown) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+            console.error('[AmwalPayment] Payment initiation failed:', errorMessage);
+            onError?.(error);
             setLoading(false);
         }
-    };
+    }, [billId, amount, userId, onError, loading]);
 
     return (
         <button
             onClick={handlePayment}
             disabled={loading}
-            className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-4 px-6 rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            className={`w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-4 px-6 rounded-xl 
+                       transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed 
+                       active:scale-[0.985] ${className}`}
         >
-            {loading ? 'Processing...' : children}
+            {loading ? 'Processing Payment...' : children}
         </button>
     );
 };

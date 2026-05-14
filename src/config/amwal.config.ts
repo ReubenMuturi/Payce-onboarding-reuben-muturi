@@ -1,22 +1,39 @@
 // src/config/amwal.config.ts
-export const amwalConfig = {
-    // Environment
-    environment: process.env.NODE_ENV || 'development',
+import { z } from 'zod';
 
-    // Base URLs - Use test environment by default
-    baseUrl: process.env.AMWAL_BASE_URL || 'https://test.amwalpg.com',
+const amwalConfigSchema = z.object({
+    sandboxMode: z.boolean().default(true),
+    useMock: z.boolean().default(false),
 
-    // === MOCK CREDENTIALS (Replace with real ones in production) ===
-    merchantId: process.env.AMWAL_MERCHANT_ID || 'MOCK_MERCHANT_ID_12345',
-    terminalId: process.env.AMWAL_TERMINAL_ID || 'MOCK_TERMINAL_ID_67890',
-    secureKey: process.env.AMWAL_SECURE_KEY || 'MOCK_SECURE_KEY_32_CHARACTERS_MINIMUM_FOR_TESTING',
+    // Required in production
+    baseUrl: z.string().url(),
+    merchantId: z.string().min(1, 'AMWAL_MERCHANT_ID is required'),
+    terminalId: z.string().min(1, 'AMWAL_TERMINAL_ID is required'),
+    secureKey: z.string().min(16, 'AMWAL_SECURE_KEY is required and must be at least 16 characters'),
 
-    // Fixed values for Oman
-    currencyId: 512, // OMR
+    currencyId: z.number().positive(),
+    paymentTimeoutMs: z.number().positive().default(10 * 60 * 1000), // 10 minutes
+    defaultLanguage: z.enum(['en', 'ar']).default('en'),
+    smartboxUrl: z.string().url(),
+});
 
-    // Other settings
-    paymentTimeoutMs: 10 * 60 * 1000, // 10 minutes
-    defaultLanguage: 'en',
+type AmwalConfig = z.infer<typeof amwalConfigSchema>;
+
+const rawConfig: Record<string, unknown> = {
+    sandboxMode: process.env.AMWAL_SANDBOX_MODE === 'true',
+    useMock: process.env.AMWAL_USE_MOCK === 'true',
+
+    baseUrl: process.env.AMWAL_BASE_URL,
+    merchantId: process.env.AMWAL_MERCHANT_ID,
+    terminalId: process.env.AMWAL_TERMINAL_ID,
+    secureKey: process.env.AMWAL_SECURE_KEY,
+
+    currencyId: parseInt(process.env.AMWAL_CURRENCY_ID || '512', 10),
+    defaultLanguage: process.env.AMWAL_DEFAULT_LANGUAGE,
+    smartboxUrl: process.env.AMWAL_SMARTBOX_URL,
 };
 
+export const amwalConfig = amwalConfigSchema.parse(rawConfig);
+
 export default amwalConfig;
+export type { AmwalConfig };

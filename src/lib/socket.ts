@@ -1,21 +1,47 @@
 // src/lib/socket.ts
-import { io, Socket } from 'socket.io-client';
+import { io, Socket as SocketIOClient } from 'socket.io-client';
 
-let socket: Socket | null = null;
+let socket: SocketIOClient | null = null;
 
-export const initSocket = (billId: string): Socket => {
-    if (!socket) {
-        socket = io(process.env.REACT_APP_WS_URL || 'http://localhost:5000', {
-            reconnection: true,
-            reconnectionAttempts: 5,
-        });
+/**
+ * Initialize Socket.io connection for real-time bill updates
+ */
+export const initSocket = (billId: string): SocketIOClient => {
+    if (socket?.connected) {
+        socket.emit('join-bill', billId);
+        return socket;
     }
 
-    socket.emit('join-bill', billId);
+    const socketUrl = process.env.SOCKET_URL || process.env.REACT_APP_WS_URL || 'http://localhost:5000';
+
+    socket = io(socketUrl, {
+        reconnection: true,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 1000,
+        transports: ['websocket', 'polling'],
+    });
+
+    socket.on('connect', () => {
+        console.log(`[Socket] Connected successfully | Joining bill: ${billId}`);
+        socket?.emit('join-bill', billId);
+    });
+
+    socket.on('connect_error', (error) => {
+        console.error('[Socket] Connection error:', error.message);
+    });
+
     return socket;
 };
 
-export const disconnectSocket = () => {
+/**
+ * Disconnect socket when user leaves the bill page
+ */
+export const disconnectSocket = (): void => {
     socket?.disconnect();
     socket = null;
 };
+
+/**
+ * Get current socket instance if needed elsewhere
+ */
+export const getCurrentSocket = (): SocketIOClient | null => socket;

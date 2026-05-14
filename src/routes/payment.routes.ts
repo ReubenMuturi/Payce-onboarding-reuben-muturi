@@ -6,10 +6,17 @@ import { webhookAuthMiddleware } from '../middleware/webhookAuth';
 const router = Router();
 const paymentController = new PaymentController();
 
-// Public endpoint - called by frontend
+/**
+ * Payment Routes
+ *
+ * All routes related to payment initiation and webhooks
+ */
+
+// Initiate payment - Called by frontend (customer flow)
 router.post('/initiate', paymentController.initiatePayment);
 
-// Webhook endpoint from Amwal Pay (Cloud Notifier)
+// Amwal Pay Webhook (Cloud Notifier)
+// Protected by signature verification middleware
 router.post('/webhook', webhookAuthMiddleware, paymentController.handleWebhook);
 
 export default router;

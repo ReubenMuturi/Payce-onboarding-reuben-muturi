@@ -1,45 +1,44 @@
 // src/middleware/webhookAuth.ts
 import { Request, Response, NextFunction } from 'express';
+import { amwalConfig } from '../config/amwal.config';
 
 export const webhookAuthMiddleware = async (
     req: Request,
     res: Response,
     next: NextFunction
-) => {
+): Promise<void> => {
     try {
         const signature = req.headers['x-amwal-signature'] ||
             req.headers['x-signature'] ||
             req.headers['amwal-signature'];
 
-        const ip = req.ip || req.socket.remoteAddress;
-
-        console.log(`Webhook received from IP: ${ip}`);
-
-        // === Basic Security Checks ===
+        // Basic protection: Reject in production if no signature is present
         if (!signature) {
-            console.warn('Webhook received without signature');
-            // In development, allow it. In production, reject.
-            if (process.env.NODE_ENV === 'production') {
-                return res.status(401).send('Unauthorized: Missing signature');
+            if (!amwalConfig.useMock && process.env.NODE_ENV === 'production') {
+                res.status(401).send('Unauthorized: Missing signature');
+                return;
             }
+            // In mock/development mode, allow missing signature for easier testing
         }
 
-        // TODO: Implement real signature validation when you get the spec from Amwal
-        // Example placeholder:
-        // const expectedSignature = generateWebhookSignature(req.body, process.env.AMWAL_WEBHOOK_SECRET!);
-        // if (signature !== expectedSignature) {
-        //     console.warn('Invalid webhook signature');
-        //     return res.status(401).send('Invalid signature');
+        // TODO: Implement full signature verification once Amwal provides the exact method
+        // Example:
+        // const isValid = verifyAmwalSignature(req.body, signature as string, process.env.AMWAL_WEBHOOK_SECRET!);
+        // if (!isValid && !amwalConfig.useMock) {
+        //     res.status(401).send('Invalid signature');
+        //     return;
         // }
 
-        // Optional: IP Whitelisting (add Amwal IPs when known)
-        // const allowedIPs = ['154.XXX.XXX.XXX'];
-        // if (!allowedIPs.includes(ip)) { ... }
-
-        console.log('Webhook passed security checks');
         next();
     } catch (error) {
-        console.error('Webhook auth middleware error:', error);
+        console.error('[WebhookAuth] Error processing middleware:', error);
+
+        // Fail open in development, fail closed in production
+        if (process.env.NODE_ENV === 'production' && !amwalConfig.useMock) {
+            res.status(401).send('Unauthorized');
+            return;
+        }
+
         next(error);
     }
 };

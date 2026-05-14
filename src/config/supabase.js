@@ -1,7 +1,4 @@
 // src/config/supabase.js
-// ================================================
-// Supabase Configuration
-// ================================================
 // Purpose: Central place to configure and export Supabase client
 // We use the Service Role Key because this runs on the backend (server-side)
 

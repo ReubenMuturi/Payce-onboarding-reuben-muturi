@@ -1,7 +1,4 @@
 // src/services/loyverse.service.js
-// ================================================
-// Loyverse Service
-// ================================================
 // Purpose: Handles all communication with Loyverse POS API
 // and syncing menu data (items, categories, variants) into Supabase.
 

@@ -4,10 +4,13 @@
   "description": "Payce Backend - QR Payment System",
   "main": "dist/server.js",
   "scripts": {
-    "start": "node dist/server.js",
     "dev": "ts-node src/server.ts",
-    "build": "tsc",
+    "dev:payment": "ts-node src/app.ts",
     "dev:watch": "nodemon --exec ts-node src/server.ts",
+    "dev:payment:watch": "nodemon --exec ts-node src/app.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "start:payment": "node dist/app.js",
     "test:sync": "ts-node test-sync.ts"
   },
   "type": "commonjs",
@@ -20,6 +23,8 @@
     "helmet": "^8.1.0",
     "morgan": "^1.10.1",
     "node-cron": "^4.2.1",
+    "react-router-dom": "^7.15.1",
+    "socket.io-client": "^4.8.3",
     "uuid": "^14.0.0",
     "zod": "^4.4.3"
   },
@@ -29,6 +34,8 @@
     "@types/morgan": "^1.9.10",
     "@types/node": "^25.7.0",
     "@types/node-cron": "^3.0.11",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "nodemon": "^3.1.14",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.2"

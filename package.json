@@ -1,31 +1,36 @@
 {
-  "name": "payce-dummy-backend",
+  "name": "payce-backend",
   "version": "1.0.0",
-  "description": "Payce Backend",
-  "main": "src/server.js",
-  "type": "commonjs",
+  "description": "Payce Backend - QR Payment System",
+  "main": "dist/server.js",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "nodemon src/server.js",
-    "sync": "node test-sync.js",
+    "start": "node dist/server.js",
+    "dev": "ts-node src/server.ts",
     "build": "tsc",
-    "dev:ts": "ts-node src/server.js"
+    "dev:watch": "nodemon --exec ts-node src/server.ts",
+    "test:sync": "ts-node test-sync.ts"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "type": "commonjs",
   "dependencies": {
     "@supabase/supabase-js": "^2.105.4",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
-    "express": "^4.21.0",
-    "helmet": "^8.1.0"
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.5.1",
+    "helmet": "^8.1.0",
+    "morgan": "^1.10.1",
+    "node-cron": "^4.2.1",
+    "uuid": "^14.0.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/express": "^5.0.0",
-    "@types/node": "^22.19.19",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/morgan": "^1.9.10",
+    "@types/node": "^25.7.0",
+    "@types/node-cron": "^3.0.11",
     "nodemon": "^3.1.14",
     "ts-node": "^10.9.2",
-    "typescript": "^5.6.0"
+    "typescript": "^5.8.2"
   }
 }

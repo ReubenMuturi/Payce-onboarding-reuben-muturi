@@ -1,7 +1,4 @@
 // src/server.js
-// ================================================
-// Payce Dummy Backend - Main Server File
-// ================================================
 // Purpose: This is the entry point of the backend.
 // It sets up the Express server, middleware, and all API routes.
 

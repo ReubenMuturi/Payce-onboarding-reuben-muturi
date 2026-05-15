@@ -1,58 +1,49 @@
 // src/services/payment/AmwalPayService.ts
 import { supabase } from '../../config/database';
-import { amwalConfig } from '../../config/amwal.config';
 import { generateSecureHash } from '../../utils/crypto';
-import { v4 as uuidv4, validate as uuidValidate } from 'uuid';
+import amwalConfig from '../../config/amwal.config';
+import { z } from 'zod';
 
-export type PaymentStatus = 'PENDING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
+const InitiatePaymentSchema = z.object({
+    billId: z.string().uuid('Invalid billId - must be a valid UUID'),
+    amount: z.number().positive('Amount must be greater than 0'),
+    userId: z.string().optional(),
+});
 
 export class AmwalPayService {
 
     /**
-     * Initiate a new payment session
+     * Initiate a new payment session with Amwal Pay
      */
-    async initiatePayment(
-        billId: string,
-        amount: number,
-        userId?: string
-    ): Promise<{
-        config: any;
-        paymentId: string;
-        idempotencyKey: string;
-        merchantReference: string;
-    }> {
+    async initiatePayment(billId: string, amount: number, userId?: string) {
+        const validated = InitiatePaymentSchema.parse({ billId, amount, userId });
 
-        if (!billId || !uuidValidate(billId)) {
-            throw new Error('Invalid billId: Must be a valid UUID');
-        }
-
-        if (!amount || amount <= 0) {
-            throw new Error('Payment amount must be greater than zero');
-        }
-
-        const idempotencyKey = uuidv4();
-        const merchantReference = `BILL_${billId}_${Date.now()}`;
+        const idempotencyKey = crypto.randomUUID();
         const requestDateTime = new Date().toISOString();
+        const merchantReference = `BILL_${billId}_${Date.now()}`;
 
-        // === Check bill exists and is payable ===
+        // Fetch bill and validate
         const { data: bill, error: billError } = await supabase
             .from('bills')
-            .select('id, status, total_amount, paid_amount')
-            .eq('id', billId)
+            .select('total_amount, paid_amount, status')
+            .eq('id', validated.billId)
             .single();
 
         if (billError || !bill) {
-            throw new Error(`Bill with ID ${billId} not found`);
+            throw new Error(`Bill not found: ${validated.billId}`);
         }
 
         if (bill.status === 'PAID') {
             throw new Error('This bill has already been fully paid');
         }
 
-        // TODO: Add proper idempotency check here (search by idempotency_key)
+        const remaining = (bill.total_amount || 0) - (bill.paid_amount || 0);
+        if (amount > remaining) {
+            throw new Error(`Payment amount exceeds remaining balance. Remaining: ${remaining}`);
+        }
 
-        // === Prepare payload for Amwal ===
-        const paramsForHash = {
+        // Prepare parameters for Amwal Secure Hash
+        const hashParams = {
             AmountTrxn: amount.toFixed(3),
             CurrencyId: amwalConfig.currencyId.toString(),
             MID: amwalConfig.merchantId,
@@ -63,83 +54,103 @@ export class AmwalPayService {
             PaymentViewType: '1',
         };
 
-        const secureHash = generateSecureHash(paramsForHash, amwalConfig.secureKey!);
+        const secureHash = generateSecureHash(hashParams, amwalConfig.secureKey);
 
-        // === Create pending payment record ===
-        const { data: payment, error: insertError } = await supabase
+        // Create pending payment record
+        const { data: paymentRecord, error: insertError } = await supabase
             .from('bill_payments')
             .insert({
-                bill_id: billId,
-                amount,
-                status: 'PENDING' as PaymentStatus,
+                bill_id: validated.billId,
+                amount: validated.amount,
+                status: 'PENDING',
                 gateway: 'AMWAL',
                 idempotency_key: idempotencyKey,
                 merchant_reference: merchantReference,
                 request_datetime: requestDateTime,
-                user_id: userId,
+                user_id: validated.userId,
             })
             .select('id')
             .single();
 
-        if (insertError || !payment) {
+        if (insertError || !paymentRecord) {
             throw new Error(`Failed to create payment record: ${insertError?.message}`);
         }
 
         return {
+            paymentId: paymentRecord.id,
+            idempotencyKey,
+            merchantReference,
             config: {
-                ...paramsForHash,
+                ...hashParams,
                 SecureHash: secureHash,
                 completeCallback: 'window.handleAmwalPaymentComplete',
                 errorCallback: 'window.handleAmwalPaymentError',
                 cancelCallback: 'window.handleAmwalPaymentCancel',
             },
-            paymentId: payment.id,
-            idempotencyKey,
-            merchantReference,
         };
     }
 
     /**
-     * Process webhook from Amwal Pay
+     * Handle incoming webhook from Amwal Pay
      */
-    async handleWebhook(payload: any): Promise<void> {
-        const { success, responseCode, data } = payload || {};
-        const merchantReference = data?.merchantReference || data?.MerchantReference;
+    async handleWebhook(payload: unknown): Promise<void> {
+        const parsed = z.object({
+            success: z.boolean(),
+            responseCode: z.string().optional(),
+            data: z.object({
+                merchantReference: z.string().optional(),
+                MerchantReference: z.string().optional(),
+            }).optional(),
+        }).parse(payload);
+
+        const merchantReference = parsed.data?.merchantReference || parsed.data?.MerchantReference;
 
         if (!merchantReference) {
             throw new Error('Missing merchantReference in webhook payload');
         }
 
-        // TODO: Add webhook signature verification here
-
-        const { data: payment } = await supabase
+        const { data: payment, error: fetchError } = await supabase
             .from('bill_payments')
             .select('id, bill_id, amount')
             .eq('merchant_reference', merchantReference)
             .single();
 
-        if (!payment) {
+        if (fetchError || !payment) {
             throw new Error(`Payment record not found for reference: ${merchantReference}`);
         }
 
-        const newStatus: PaymentStatus = (success && responseCode === '00') ? 'SUCCESS' : 'FAILED';
+        const newStatus = (parsed.success && parsed.responseCode === '00') ? 'SUCCESS' : 'FAILED';
 
-        // Use transaction for atomic update
-        const { error: txError } = await supabase.rpc('process_payment_webhook', {
-            p_payment_id: payment.id,
-            p_bill_id: payment.bill_id,
-            p_amount: payment.amount,
-            p_new_status: newStatus,
-            p_gateway_response: payload,
-        });
+        // Update payment status
+        const { error: updateError } = await supabase
+            .from('bill_payments')
+            .update({
+                status: newStatus,
+                gateway_response: payload,
+                updated_at: new Date().toISOString(),
+            })
+            .eq('id', payment.id);
 
-        if (txError) {
-            throw new Error(`Failed to process webhook: ${txError.message}`);
+        if (updateError) throw updateError;
+
+        // If successful, update bill's paid_amount
+        if (newStatus === 'SUCCESS') {
+            await supabase
+                .from('bills')
+                .update({
+                    paid_amount: supabase.rpc('increment_paid_amount', {
+                        bill_id: payment.bill_id,
+                        amount: payment.amount,
+                    }),
+                    status: 'PAID',
+                    updated_at: new Date().toISOString(),
+                })
+                .eq('id', payment.bill_id);
         }
     }
 
     /**
-     * Reconciliation for stuck payments (called by job)
+     * Reconciliation job for stuck PENDING payments
      */
     async reconcileStuckPayments(): Promise<void> {
         const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
@@ -150,39 +161,31 @@ export class AmwalPayService {
             .eq('status', 'PENDING')
             .lte('created_at', tenMinutesAgo);
 
-        if (error) throw error;
+        if (error) {
+            console.error('Reconciliation query failed:', error);
+            return;
+        }
+
         if (!stuckPayments?.length) return;
 
-        // TODO: Implement actual status check with Amwal API
-        console.warn(`[Reconciliation] Found ${stuckPayments.length} stuck payments`);
+        console.warn(`Found ${stuckPayments.length} stuck payments needing reconciliation`);
 
+        // TODO: Call Amwal status check API for each payment
+        for (const payment of stuckPayments) {
+            console.warn(`[Reconciliation] Manual review needed: ${payment.merchant_reference}`);
+        }
     }
 }
 
-// ======================
-// Background Job Runner
-// ======================
+// Background Job Scheduler
+export const startReconciliationJob = () => {
+    console.log('Amwal reconciliation job scheduler started');
 
-/**
- * Starts the reconciliation job for stuck payments
- * Should be called once when the server starts
- */
-export const startReconciliationJob = (): void => {
-    console.log('Starting Amwal Pay Reconciliation Job...');
+    // Initial check after 15 seconds
+    setTimeout(() => new AmwalPayService().reconcileStuckPayments(), 15_000);
 
-    // Run immediately after a short delay
-    setTimeout(async () => {
-        const service = new AmwalPayService();
-        await service.reconcileStuckPayments();
-    }, 10_000);
-
-    // Then run every 5 minutes
-    setInterval(async () => {
-        try {
-            const service = new AmwalPayService();
-            await service.reconcileStuckPayments();
-        } catch (error) {
-            console.error('Reconciliation job failed:', error);
-        }
-    }, 5 * 60 * 1000); // 5 minutes
+    // Run every 5 minutes
+    setInterval(() => {
+        new AmwalPayService().reconcileStuckPayments().catch(console.error);
+    }, 5 * 60 * 1000);
 };

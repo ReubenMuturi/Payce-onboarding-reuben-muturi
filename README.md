@@ -2,6 +2,9 @@
 Payce Developer Onboarding Repository
 Test case on new branch
 
+To execute the:DB management logic run - npm run dev:payment
+               Payment Logic run - npm run dev
+
 
 
 Loyverse + Supabase DB Management Structure

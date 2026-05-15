@@ -1,47 +1,66 @@
 // src/lib/socket.ts
 import { io, Socket as SocketIOClient } from 'socket.io-client';
 
-let socket: SocketIOClient | null = null;
+let currentSocket: SocketIOClient | null = null;
 
 /**
- * Initialize Socket.io connection for real-time bill updates
+ * Initialize or reuse Socket.io connection for real-time bill updates
  */
 export const initSocket = (billId: string): SocketIOClient => {
-    if (socket?.connected) {
-        socket.emit('join-bill', billId);
-        return socket;
+    // If socket exists and is connected, just join the new bill room
+    if (currentSocket?.connected) {
+        currentSocket.emit('join-bill', billId);
+        return currentSocket;
     }
 
-    const socketUrl = process.env.SOCKET_URL || process.env.REACT_APP_WS_URL || 'http://localhost:5000';
+    const socketUrl = process.env.SOCKET_URL ||
+        process.env.REACT_APP_WS_URL ||
+        'http://localhost:5000';
 
-    socket = io(socketUrl, {
+    currentSocket = io(socketUrl, {
         reconnection: true,
         reconnectionAttempts: 5,
         reconnectionDelay: 1000,
+        timeout: 10000,
         transports: ['websocket', 'polling'],
+        autoConnect: true,
     });
 
-    socket.on('connect', () => {
-        console.log(`[Socket] Connected successfully | Joining bill: ${billId}`);
-        socket?.emit('join-bill', billId);
+    currentSocket.on('connect', () => {
+        console.log(`[Socket] Connected | Joining bill: ${billId}`);
+        currentSocket?.emit('join-bill', billId);
     });
 
-    socket.on('connect_error', (error) => {
+    currentSocket.on('connect_error', (error) => {
         console.error('[Socket] Connection error:', error.message);
     });
 
-    return socket;
+    currentSocket.on('disconnect', (reason) => {
+        console.log(`[Socket] Disconnected. Reason: ${reason}`);
+    });
+
+    return currentSocket;
 };
 
 /**
- * Disconnect socket when user leaves the bill page
+ * Disconnect socket and clean up when component unmounts
  */
 export const disconnectSocket = (): void => {
-    socket?.disconnect();
-    socket = null;
+    if (currentSocket) {
+        currentSocket.removeAllListeners();
+        currentSocket.disconnect();
+        currentSocket = null;
+    }
 };
 
 /**
- * Get current socket instance if needed elsewhere
+ * Get current socket instance (for advanced use cases)
  */
-export const getCurrentSocket = (): SocketIOClient | null => socket;
+export const getCurrentSocket = (): SocketIOClient | null => currentSocket;
+
+/**
+ * Join a specific bill room (useful if socket is already connected)
+ */
+export const joinBillRoom = (billId: string): void => {
+    currentSocket?.emit('join-bill', billId);
+};

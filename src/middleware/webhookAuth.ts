@@ -1,44 +1,58 @@
 // src/middleware/webhookAuth.ts
 import { Request, Response, NextFunction } from 'express';
-import { amwalConfig } from '../config/amwal.config';
+import amwalConfig from '../config/amwal.config';
 
+/**
+ * Webhook Authentication Middleware for Amwal Pay
+ * Critical security layer for incoming payment notifications.
+ */
 export const webhookAuthMiddleware = async (
     req: Request,
     res: Response,
     next: NextFunction
 ): Promise<void> => {
     try {
-        const signature = req.headers['x-amwal-signature'] ||
+        const signature =
+            req.headers['x-amwal-signature'] ||
             req.headers['x-signature'] ||
             req.headers['amwal-signature'];
 
-        // Basic protection: Reject in production if no signature is present
+        const ip = req.ip || req.socket.remoteAddress || 'unknown';
+
+        // Basic IP logging (can be enhanced with Winston later)
+        console.info(`[Webhook] Received from IP: ${ip}`);
+
+        // === Signature Validation ===
         if (!signature) {
-            if (!amwalConfig.useMock && process.env.NODE_ENV === 'production') {
-                res.status(401).send('Unauthorized: Missing signature');
+            console.warn(`[Webhook] Missing signature from IP: ${ip}`);
+
+            if (process.env.NODE_ENV === 'production') {
+                res.status(401).json({ error: 'Unauthorized: Missing signature' });
                 return;
             }
-            // In mock/development mode, allow missing signature for easier testing
         }
 
-        // TODO: Implement full signature verification once Amwal provides the exact method
+        // TODO: Implement proper signature verification once Amwal provides the algorithm
         // Example:
-        // const isValid = verifyAmwalSignature(req.body, signature as string, process.env.AMWAL_WEBHOOK_SECRET!);
-        // if (!isValid && !amwalConfig.useMock) {
-        //     res.status(401).send('Invalid signature');
-        //     return;
+        // const isValid = verifySecureHash(req.body, signature as string, process.env.AMWAL_WEBHOOK_SECRET!);
+        // if (!isValid) {
+        //   console.warn(`[Webhook] Invalid signature from IP: ${ip}`);
+        //   res.status(401).json({ error: 'Invalid signature' });
+        //   return;
         // }
+
+        // Optional: IP Whitelisting (highly recommended in production)
+        // const allowedIPs = process.env.AMWAL_ALLOWED_IPS?.split(',') || [];
+        // if (process.env.NODE_ENV === 'production' && !allowedIPs.includes(ip)) {
+        //   res.status(403).json({ error: 'IP not allowed' });
+        //   return;
+        // }
+
+        // Rate limiting can be added here using express-rate-limit + Redis
 
         next();
     } catch (error) {
-        console.error('[WebhookAuth] Error processing middleware:', error);
-
-        // Fail open in development, fail closed in production
-        if (process.env.NODE_ENV === 'production' && !amwalConfig.useMock) {
-            res.status(401).send('Unauthorized');
-            return;
-        }
-
-        next(error);
+        console.error('[Webhook Auth] Critical error:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 };

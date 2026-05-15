@@ -2,46 +2,56 @@
 import crypto from 'crypto';
 
 /**
- * Generates Secure Hash for Amwal Pay API requests
+ * Generates a secure HMAC-SHA256 hash for Amwal Pay requests.
  *
- * Amwal requires:
- * 1. Keys sorted alphabetically
- * 2. Concatenated as key=value&key2=value2...
- * 3. HMAC-SHA256 using the secret key
- * 4. Result in UPPERCASE hex
+ * Amwal requires parameters to be sorted alphabetically and concatenated
+ * in the format: key1=value1&key2=value2
  */
 export const generateSecureHash = (
     params: Record<string, string | number | boolean | null | undefined>,
     secretKey: string
 ): string => {
-    if (!secretKey || secretKey.length < 16) {
-        throw new Error('Invalid secretKey: Must be at least 16 characters');
+    if (!secretKey || secretKey.length < 32) {
+        throw new Error('Invalid secretKey: Amwal secure key must be at least 32 characters');
     }
 
     if (!params || typeof params !== 'object') {
-        throw new Error('Params must be a valid object');
+        throw new Error('Parameters must be a valid object');
     }
 
     // Sort keys alphabetically as required by Amwal
     const sortedKeys = Object.keys(params).sort();
 
     const concatenatedString = sortedKeys
-        .map((key) => `${key}=${params[key] ?? ''}`)
+        .map((key) => {
+            const value = params[key] ?? '';
+            return `${key}=${value}`;
+        })
         .join('&');
 
-    // Create HMAC-SHA256 hash
+    // Create HMAC using SHA256
     const hmac = crypto.createHmac('sha256', Buffer.from(secretKey, 'hex'));
-    const hash = hmac.update(concatenatedString, 'utf8').digest('hex');
 
-    return hash.toUpperCase();
+    const hash = hmac
+        .update(concatenatedString, 'utf8')
+        .digest('hex')
+        .toUpperCase();
+
+    return hash;
 };
 
 /**
- * Alternative version that accepts string secret (for future flexibility)
+ * Optional: Verify a received hash (useful for webhooks if Amwal provides one)
  */
-export const generateSecureHashFromString = (
-    params: Record<string, any>,
+export const verifySecureHash = (
+    params: Record<string, string | number | boolean | null | undefined>,
+    receivedHash: string,
     secretKey: string
-): string => {
-    return generateSecureHash(params, secretKey);
+): boolean => {
+    try {
+        const calculatedHash = generateSecureHash(params, secretKey);
+        return calculatedHash === receivedHash.toUpperCase();
+    } catch {
+        return false;
+    }
 };

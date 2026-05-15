@@ -9,14 +9,26 @@ const paymentController = new PaymentController();
 /**
  * Payment Routes
  *
- * All routes related to payment initiation and webhooks
+ * All routes related to payment initiation and webhooks.
  */
 
-// Initiate payment - Called by frontend (customer flow)
-router.post('/initiate', paymentController.initiatePayment);
+// Public endpoint - Called by frontend when customer wants to pay
+router.post(
+    '/initiate',
+    paymentController.initiatePayment
+);
 
-// Amwal Pay Webhook (Cloud Notifier)
-// Protected by signature verification middleware
-router.post('/webhook', webhookAuthMiddleware, paymentController.handleWebhook);
+// Webhook endpoint - Called by Amwal Pay
+// This must be protected and always return 200
+router.post(
+    '/webhook',
+    webhookAuthMiddleware,
+    paymentController.handleWebhook
+);
+
+// Optional: Health check for monitoring
+router.get('/health', (req, res) => {
+    res.status(200).json({ status: 'ok', service: 'payment' });
+});
 
 export default router;

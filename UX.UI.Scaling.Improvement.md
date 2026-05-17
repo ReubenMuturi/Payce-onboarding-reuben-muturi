@@ -49,7 +49,7 @@ In the payment screen, show “Add a drink for only 0.400” as a last-mile upse
 Proposed UI/UX Improvements
 Immediate Wins (Easy to Implement):
 
-Add the actual back button click option fot the phone other than the back button at the top of the customers page
+Add the actual back button click option for the phone, other than the back button at the top of the customer's page
 Add “Popular” badges on high-margin items.
 Improve image quality and consistent aspect ratio.
 Add quantity selector directly on menu cards.

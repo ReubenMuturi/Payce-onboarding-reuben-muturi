@@ -2,7 +2,7 @@
 Payce Developer Onboarding Repository
 
 
-To execute the Payment Logic run - npm run dev
+To execute the Payment Logic run - npm run dev:payment
 
 
 

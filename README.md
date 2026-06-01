@@ -2,7 +2,7 @@
 Payce Developer Onboarding Repository
 
 
-To execute the: DB management logic run - npm run dev:payment
+To execute the: DB management logic run - npm run dev
 
 This will pull/get data states and updates from Loyverse and log them locally 
 

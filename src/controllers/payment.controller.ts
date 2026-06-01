@@ -2,6 +2,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { AmwalPayService } from '../services/payment/AmwalPayService';
 import { z } from 'zod';
+import { PaymentError } from '../types/payment.types';
 
 const InitiatePaymentSchema = z.object({
     billId: z.string().uuid('billId must be a valid UUID'),
@@ -39,12 +40,20 @@ export class PaymentController {
                 return;
             }
 
+            // Handle Custom Payment Errors
+            if (error instanceof PaymentError) {
+                res.status(error.statusCode).json({
+                    success: false,
+                    error: error.message,
+                });
+                return;
+            }
+
             console.error('[PaymentController] Initiate payment failed:', error);
 
             res.status(500).json({
                 success: false,
                 error: 'Failed to initiate payment. Please try again.',
-                // Never leak internal error details in production
                 ...(process.env.NODE_ENV === 'development' && { message: error.message }),
             });
         }

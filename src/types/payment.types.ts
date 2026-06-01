@@ -48,8 +48,57 @@ export interface WebhookPayload {
 }
 
 /**
+ * Transaction Status Response (used for reconciliation)
+ */
+export interface TransactionStatusResponse {
+    transactionId: string;
+    status: 'SUCCESS' | 'FAILED' | 'PENDING' | 'EXPIRED';
+    amount: number;
+    currency: string;
+    updatedAt: string;
+}
+
+/**
  * Internal payment status type (used across service + database)
  */
 export type PaymentStatus = 'PENDING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
 
 export type PaymentGateway = 'AMWAL' | 'OTHER';
+
+/**
+ * Custom Error classes for Payment Flow
+ */
+export class PaymentError extends Error {
+    constructor(public message: string, public statusCode: number = 500) {
+        super(message);
+        this.name = 'PaymentError';
+    }
+}
+
+export class BillNotFoundError extends PaymentError {
+    constructor(billId: string) {
+        super(`Bill not found: ${billId}`, 404);
+        this.name = 'BillNotFoundError';
+    }
+}
+
+export class PaymentAlreadyCompletedError extends PaymentError {
+    constructor() {
+        super('This bill has already been fully paid', 400);
+        this.name = 'PaymentAlreadyCompletedError';
+    }
+}
+
+export class InsufficientBalanceError extends PaymentError {
+    constructor(remaining: number) {
+        super(`Payment amount exceeds remaining balance. Remaining: ${remaining}`, 400);
+        this.name = 'InsufficientBalanceError';
+    }
+}
+
+export class GatewayError extends PaymentError {
+    constructor(message: string) {
+        super(`Payment Gateway Error: ${message}`, 502);
+        this.name = 'GatewayError';
+    }
+}

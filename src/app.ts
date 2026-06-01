@@ -12,6 +12,7 @@ import paymentRoutes from './routes/payment.routes';
 // Config & Services
 import { testDatabaseConnection } from './config/database';
 import { startReconciliationJob } from './services/payment/AmwalPayService';
+import { PaymentError } from './types/payment.types';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -53,11 +54,30 @@ app.use('/api/payments', paymentRoutes);
  * ======================
  */
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    // 1. Handle Custom Payment Errors
+    if (err instanceof PaymentError) {
+        return res.status(err.statusCode).json({
+            success: false,
+            error: err.message,
+        });
+    }
+
+    // 2. Handle Zod Validation Errors
+    if (err.name === 'ZodError') {
+        return res.status(400).json({
+            success: false,
+            error: 'Validation failed',
+            details: err.errors,
+        });
+    }
+
+    // 3. Generic Internal Server Error
     console.error('[Global Error]', err);
 
     res.status(500).json({
         success: false,
         error: 'Internal Server Error',
+        ...(process.env.NODE_ENV === 'development' && { message: err.message }),
     });
 });
 

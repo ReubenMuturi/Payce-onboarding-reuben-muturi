@@ -13,6 +13,10 @@ const amwalConfigSchema = z.object({
     // Base URLs
     baseUrl: z.string().url().default('https://test.amwalpg.com'),
 
+    // Added endpoints for reconciliation and status checks
+    statusCheckUrl: z.string().url().default('https://test.amwalpg.com/api/transaction/status'),
+    webhookSecret: z.string().min(1, 'AMWAL_WEBHOOK_SECRET is required for signature verification').optional(),
+
     // Required Credentials
     merchantId: z.string().min(1, 'AMWAL_MERCHANT_ID is required'),
     terminalId: z.string().min(1, 'AMWAL_TERMINAL_ID is required'),
@@ -30,6 +34,8 @@ const amwalConfigSchema = z.object({
 const rawConfig = {
     environment: process.env.NODE_ENV,
     baseUrl: process.env.AMWAL_BASE_URL,
+    statusCheckUrl: process.env.AMWAL_STATUS_CHECK_URL,
+    webhookSecret: process.env.AMWAL_WEBHOOK_SECRET,
     merchantId: process.env.AMWAL_MERCHANT_ID,
     terminalId: process.env.AMWAL_TERMINAL_ID,
     secureKey: process.env.AMWAL_SECURE_KEY,

@@ -2,7 +2,7 @@
 Payce Developer Onboarding Repository
 
 
-To execute the: DB management logic run - npm run dev:payment
+To execute the: DB management logic run - npm run dev
 
 This will pull/get data states and updates from Loyverse and log them locally
 
@@ -17,7 +17,7 @@ This will update the Supabase tables on any updates made from Loyverse that are 
 
 
 
-To execute the:Payment Logic run - npm run dev
+To execute the:Payment Logic run - npm run dev:payment
 
 
 Payment Logic Structure

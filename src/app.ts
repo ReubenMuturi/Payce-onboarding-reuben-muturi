@@ -5,6 +5,8 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import { requestIdMiddleware } from './middleware/requestId';
+import { logger } from './lib/logger';
 
 // Routes
 import paymentRoutes from './routes/payment.routes';
@@ -31,6 +33,7 @@ app.use(cors({
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+app.use(requestIdMiddleware);
 app.use(morgan('combined'));
 
 /**
@@ -92,11 +95,11 @@ const startServer = async () => {
         startReconciliationJob();
 
         app.listen(PORT, () => {
-            console.log(`Payce Backend running on http://localhost:${PORT}`);
-            console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+            logger.info(`Payce Backend running on http://localhost:${PORT}`);
+            logger.info({ environment: process.env.NODE_ENV || 'development' }, 'Server started successfully');
         });
     } catch (error) {
-        console.error('Failed to start Payce Backend:', error);
+        logger.fatal({ err: error }, 'Failed to start Payce Backend');
         process.exit(1);
     }
 };

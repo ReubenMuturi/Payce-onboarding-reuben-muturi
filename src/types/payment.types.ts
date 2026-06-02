@@ -47,6 +47,12 @@ export interface WebhookPayload {
     };
 }
 
+export interface IPaymentService {
+    initiatePayment(billId: string, amount: number, userId?: string): Promise<InitiatePaymentResponse>;
+    handleWebhook(payload: unknown): Promise<void>;
+    reconcileStuckPayments(): Promise<void>;
+}
+
 /**
  * Transaction Status Response (used for reconciliation)
  */
@@ -69,7 +75,7 @@ export type PaymentGateway = 'AMWAL' | 'OTHER';
  * Custom Error classes for Payment Flow
  */
 export class PaymentError extends Error {
-    constructor(public message: string, public statusCode: number = 500) {
+    constructor(public message: string, public statusCode: number = 500, public retryable: boolean = false) {
         super(message);
         this.name = 'PaymentError';
     }
@@ -97,8 +103,8 @@ export class InsufficientBalanceError extends PaymentError {
 }
 
 export class GatewayError extends PaymentError {
-    constructor(message: string) {
-        super(`Payment Gateway Error: ${message}`, 502);
+    constructor(message: string, statusCode: number = 502, retryable: boolean = false) {
+        super(`Payment Gateway Error: ${message}`, statusCode, retryable);
         this.name = 'GatewayError';
     }
 }

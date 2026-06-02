@@ -3,11 +3,13 @@ import { supabase } from '../../config/database';
 import { generateSecureHash } from '../../utils/crypto';
 import amwalConfig from '../../config/amwal.config';
 import { z } from 'zod';
+import { logger } from '../../lib/logger';
 import {
     BillNotFoundError,
     PaymentAlreadyCompletedError,
     InsufficientBalanceError,
-    GatewayError
+    GatewayError,
+    IPaymentService
 } from '../../types/payment.types';
 
 const InitiatePaymentSchema = z.object({
@@ -16,7 +18,7 @@ const InitiatePaymentSchema = z.object({
     userId: z.string().optional(),
 });
 
-export class AmwalPayService {
+export class AmwalPayService implements IPaymentService {
 
     /**
      * Initiate a new payment session with Amwal Pay
@@ -128,51 +130,23 @@ export class AmwalPayService {
 
         // IDEMPOTENCY: If already successful, do not process again
         if (payment.status === 'SUCCESS') {
-            console.info(`[Webhook] Payment ${merchantReference} already processed. Skipping.`);
+            logger.info({ merchantReference }, 'Payment already processed. Skipping.');
             return;
         }
 
         const newStatus = (parsed.success && parsed.responseCode === '00') ? 'SUCCESS' : 'FAILED';
 
-        // Update payment status first
-        const { error: updateError } = await supabase
-            .from('bill_payments')
-            .update({
-                status: newStatus,
-                gateway_response: payload,
-                updated_at: new Date().toISOString(),
-            })
-            .eq('id', payment.id);
+        // ATOMIC UPDATE: Perform payment and bill updates in a single database transaction
+        const { error: rpcError } = await supabase.rpc('process_payment_update', {
+            p_payment_id: payment.id,
+            p_new_status: newStatus,
+            p_gateway_response: payload,
+        });
 
-        if (updateError) throw updateError;
-
-        // If successful, update bill's paid_amount atomically
-        if (newStatus === 'SUCCESS') {
-            // 1. Update balance via RPC
-            const { error: rpcError } = await supabase.rpc('increment_paid_amount', {
-                bill_id: payment.bill_id,
-                amount: payment.amount,
-            });
-
-            if (rpcError) {
-                console.error(`[Webhook] Critical balance update failed for bill ${payment.bill_id}:`, rpcError);
-                throw new GatewayError('Failed to increment bill balance');
-            }
-
-            // 2. Update bill status and timestamp
-            const { error: billError } = await supabase
-                .from('bills')
-                .update({
-                    status: 'PAID',
-                    updated_at: new Date().toISOString(),
-                })
-                .eq('id', payment.bill_id);
-
-            if (billError) {
-                console.error(`[Webhook] Failed to update bill status for ${payment.bill_id}:`, billError);
-                // We don't throw here because the balance was already updated,
-                // but we should log a critical error for manual intervention.
-            }
+        if (rpcError) {
+            logger.error({ paymentId: payment.id, error: rpcError }, 'Atomic update failed for payment');
+            // DB failures are retryable (infra failure)
+            throw new GatewayError(`Database error during atomic update: ${rpcError.message}`, 500, true);
         }
     }
 
@@ -180,46 +154,58 @@ export class AmwalPayService {
      * Reconciliation job for stuck PENDING payments
      */
     async reconcileStuckPayments(): Promise<void> {
-        const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+        // 1. Attempt to acquire the distributed lock
+        // This ensures only one instance in a multi-server cluster runs the job.
+        const { data: lockAcquired, error: lockError } = await supabase.rpc('acquire_reconciliation_lock');
 
-        const { data: stuckPayments, error } = await supabase
-            .from('bill_payments')
-            .select('id, merchant_reference, amount, bill_id')
-            .eq('status', 'PENDING')
-            .lte('created_at', tenMinutesAgo);
-
-        if (error) {
-            console.error('Reconciliation query failed:', error);
+        if (lockError || !lockAcquired) {
+            // Lock not acquired: another instance is already running this job.
+            // We exit quietly to avoid log noise.
             return;
         }
 
-        if (!stuckPayments?.length) return;
+        try {
+            const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
 
-        console.info(`[Reconciliation] Found ${stuckPayments.length} stuck payments. Verifying with Amwal...`);
+            const { data: stuckPayments, error } = await supabase
+                .from('bill_payments')
+                .select('id, merchant_reference, amount, bill_id')
+                .eq('status', 'PENDING')
+                .lte('created_at', tenMinutesAgo);
 
-        for (const payment of stuckPayments) {
-            try {
-                // REAL-WORLD: Replace this with an actual API call to Amwal's status endpoint
-                // const status = await this.fetchAmwalTransactionStatus(payment.merchant_reference);
-                const status = await this.mockAmwalStatusCheck(payment.merchant_reference);
-
-                if (status === 'SUCCESS') {
-                    console.log(`[Reconciliation] Updating ${payment.merchant_reference} to SUCCESS`);
-                    // Re-use handleWebhook logic by simulating a success payload
-                    await this.handleWebhook({
-                        success: true,
-                        responseCode: '00',
-                        data: { merchantReference: payment.merchant_reference }
-                    });
-                } else if (status === 'FAILED') {
-                    await supabase
-                        .from('bill_payments')
-                        .update({ status: 'FAILED', updated_at: new Date().toISOString() })
-                        .eq('id', payment.id);
-                }
-            } catch (err) {
-                console.error(`[Reconciliation] Failed to verify payment ${payment.merchant_reference}:`, err);
+            if (error) {
+                logger.error({ error }, 'Reconciliation query failed');
+                return;
             }
+
+            if (!stuckPayments?.length) return;
+
+            logger.info({ count: stuckPayments.length }, 'Found stuck payments. Verifying with Amwal...');
+
+            for (const payment of stuckPayments) {
+                try {
+                    const status = await this.mockAmwalStatusCheck(payment.merchant_reference);
+
+                    if (status === 'SUCCESS') {
+                        logger.info({ merchantReference: payment.merchant_reference }, 'Updating stuck payment to SUCCESS');
+                        await this.handleWebhook({
+                            success: true,
+                            responseCode: '00',
+                            data: { merchantReference: payment.merchant_reference }
+                        });
+                    } else if (status === 'FAILED') {
+                        await supabase
+                            .from('bill_payments')
+                            .update({ status: 'FAILED', updated_at: new Date().toISOString() })
+                            .eq('id', payment.id);
+                    }
+                } catch (err) {
+                    logger.error({ merchantReference: payment.merchant_reference, err }, 'Failed to verify payment during reconciliation');
+                }
+            }
+        } finally {
+            // 2. Always release the lock, even if an error occurred.
+            await supabase.rpc('release_reconciliation_lock');
         }
     }
 
@@ -241,11 +227,13 @@ export class AmwalPayService {
 export const startReconciliationJob = () => {
     console.log('Amwal reconciliation job scheduler started');
 
+    const service = new AmwalPayService();
+
     // Initial check after 15 seconds
-    setTimeout(() => new AmwalPayService().reconcileStuckPayments(), 15_000);
+    setTimeout(() => service.reconcileStuckPayments(), 15_000);
 
     // Run every 5 minutes
     setInterval(() => {
-        new AmwalPayService().reconcileStuckPayments().catch(console.error);
+        service.reconcileStuckPayments().catch(console.error);
     }, 5 * 60 * 1000);
 };

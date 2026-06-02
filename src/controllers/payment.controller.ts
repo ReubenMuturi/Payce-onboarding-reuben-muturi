@@ -1,8 +1,9 @@
 // src/controllers/payment.controller.ts
 import { Request, Response, NextFunction } from 'express';
-import { AmwalPayService } from '../services/payment/AmwalPayService';
+import { IPaymentService } from '../types/payment.types';
 import { z } from 'zod';
 import { PaymentError } from '../types/payment.types';
+import { logger } from '../lib/logger';
 
 const InitiatePaymentSchema = z.object({
     billId: z.string().uuid('billId must be a valid UUID'),
@@ -11,7 +12,7 @@ const InitiatePaymentSchema = z.object({
 });
 
 export class PaymentController {
-    private amwalService = new AmwalPayService();
+    constructor(private paymentService: IPaymentService) {}
 
     /**
      * Initiate Payment - Called by frontend when customer clicks "Pay"
@@ -20,7 +21,7 @@ export class PaymentController {
         try {
             const validated = InitiatePaymentSchema.parse(req.body);
 
-            const result = await this.amwalService.initiatePayment(
+            const result = await this.paymentService.initiatePayment(
                 validated.billId,
                 validated.amount,
                 validated.userId
@@ -64,17 +65,20 @@ export class PaymentController {
      * IMPORTANT: Always return 200 OK to prevent Amwal from retrying the webhook endlessly.
      */
     handleWebhook = async (req: Request, res: Response): Promise<void> => {
+        const requestId = (req as any).requestId;
         try {
-            await this.amwalService.handleWebhook(req.body);
+            await this.paymentService.handleWebhook(req.body);
 
-            // Log success quietly
-            console.info('[Webhook] Processed successfully');
+            logger.info({ requestId }, 'Webhook processed successfully');
             res.status(200).send('OK');
         } catch (error: any) {
-            console.error('[Webhook] Processing failed:', error);
+            logger.error({ requestId, err: error }, 'Webhook processing failed');
 
-            // CRITICAL: Always return 200 for webhooks even on error
-            // This tells the gateway "we received it" and stops retries
+            if (error instanceof PaymentError && error.retryable) {
+                res.status(500).send('Infrastructure Error: Please Retry');
+                return;
+            }
+
             res.status(200).send('OK');
         }
     };

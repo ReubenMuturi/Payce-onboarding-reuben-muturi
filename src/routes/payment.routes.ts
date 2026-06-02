@@ -1,10 +1,12 @@
 // src/routes/payment.routes.ts
 import { Router } from 'express';
 import { PaymentController } from '../controllers/payment.controller';
+import { AmwalPayService } from '../services/payment/AmwalPayService';
 import { webhookAuthMiddleware } from '../middleware/webhookAuth';
 
 const router = Router();
-const paymentController = new PaymentController();
+const paymentService = new AmwalPayService();
+const paymentController = new PaymentController(paymentService);
 
 /**
  * Payment Routes

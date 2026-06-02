@@ -20,8 +20,45 @@ This will update the Supabase tables on any updates made from Loyverse that are 
 To execute the:Payment Logic run - npm run dev:payment
 
 
+Payment Logic Structure
 
-npm run test:sync   
+src/
+├── config/
+│   ├── amwal.config.ts
+│   └── database.ts
+│
+├── controllers/
+│   └── payment.controller.ts
+│
+├── features/
+│   ├── bill/
+│   │   └── BillPaymentPage.tsx
+│   └── payment/
+│       ├── AmwalPaymentButton.tsx
+│       └── PaymentSuccessPage.tsx
+│
+├── lib/
+│   ├── amwal.ts
+│   └── socket.ts
+│
+├── middleware/
+│   └── webhookAuth.ts
+│
+├── routes/
+│   └── payment.routes.ts
+│
+├── services/
+│   └── payment/
+│       └── AmwalPayService.ts
+│
+├── types/
+│   └── payment.types.ts
+│
+├── utils/
+│   └── crypto.ts                 
+│
+└── app.ts
+
 
 
 

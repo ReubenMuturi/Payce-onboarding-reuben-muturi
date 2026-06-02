@@ -1,62 +1,53 @@
 // src/config/database.ts
-import { createClient } from '@supabase/supabase-js';
-import dotenv from 'dotenv';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { z } from 'zod';
 
-dotenv.config(); // Load .env file
+const databaseConfigSchema = z.object({
+    supabaseUrl: z.string().url('SUPABASE_URL must be a valid URL'),
+    supabaseServiceKey: z.string().min(20, 'SUPABASE_SERVICE_ROLE_KEY is required'),
+});
 
-const supabaseUrl = process.env.SUPABASE_URL?.trim();
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+const env = {
+    supabaseUrl: process.env.SUPABASE_URL,
+    supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+};
 
-let supabase: any;
-let testDatabaseConnection: () => Promise<void>;
+let supabase: SupabaseClient;
 
-if (!supabaseUrl || !supabaseServiceKey || supabaseUrl.length < 10) {
-    console.warn('Supabase environment variables missing or invalid. Running in MOCK MODE.');
+try {
+    const config = databaseConfigSchema.parse(env);
 
-    // Mock Supabase Client for development
-    supabase = {
-        from: (table: string) => ({
-            insert: async (data: any) => ({
-                data: { id: 'mock-' + Date.now(), ...data },
-                error: null
-            }),
-            select: async () => ({ data: [], error: null }),
-            update: async () => ({ error: null }),
-            eq: (column: string, value: any) => ({
-                single: async () => ({
-                    data: { id: 'mock-id', bill_id: 'mock-bill-id' },
-                    error: null
-                })
-            }),
-        }),
-    };
-
-    testDatabaseConnection = async () => {
-        console.log('Mock Supabase Client Active');
-    };
-} else {
-    // Real Supabase Client
-    supabase = createClient(supabaseUrl, supabaseServiceKey, {
+    supabase = createClient(config.supabaseUrl, config.supabaseServiceKey, {
         auth: {
-            autoRefreshToken: false,
             persistSession: false,
+            autoRefreshToken: false,
         },
     });
-
-    testDatabaseConnection = async () => {
-        try {
-            const { error } = await supabase.from('bills').select('id').limit(1);
-            if (error) console.error('Supabase connection test failed:', error.message);
-            else console.log('Supabase connected successfully');
-        } catch (err) {
-            console.error('Supabase connection error:', err);
-        }
-    };
+} catch (error: any) {
+    console.error('Supabase Configuration Error:');
+    console.error(error.message);
+    console.error('\nPlease check your .env file and ensure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are correctly set.');
+    process.exit(1);
 }
 
-export { supabase, testDatabaseConnection };
+/**
+ * Test database connection during server startup
+ */
+export const testDatabaseConnection = async (): Promise<void> => {
+    try {
+        const { error } = await supabase
+            .from('bills')
+            .select('id')
+            .limit(1);
 
-// Graceful shutdown
-process.on('beforeExit', () => {
-    console.log('Shutting down...');
-});
+        if (error) throw error;
+
+        console.log('Supabase connected successfully');
+    } catch (err: any) {
+        console.error('Supabase connection test failed:', err.message);
+        throw err;
+    }
+};
+
+export { supabase };
+export type Database = typeof supabase;

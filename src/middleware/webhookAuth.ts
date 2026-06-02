@@ -1,44 +1,59 @@
 // src/middleware/webhookAuth.ts
 import { Request, Response, NextFunction } from 'express';
-import { amwalConfig } from '../config/amwal.config';
+import amwalConfig from '../config/amwal.config';
+import { verifySecureHash } from '../utils/crypto';
 
+/**
+ * Webhook Authentication Middleware for Amwal Pay
+ * Critical security layer for incoming payment notifications.
+ */
 export const webhookAuthMiddleware = async (
     req: Request,
     res: Response,
     next: NextFunction
 ): Promise<void> => {
     try {
-        const signature = req.headers['x-amwal-signature'] ||
+        const signature =
+            req.headers['x-amwal-signature'] ||
             req.headers['x-signature'] ||
             req.headers['amwal-signature'];
 
-        // Basic protection: Reject in production if no signature is present
+        const ip = req.ip || req.socket.remoteAddress || 'unknown';
+
+        console.info(`[Webhook] Received from IP: ${ip}`);
+
+        // === Signature Validation ===
         if (!signature) {
-            if (!amwalConfig.useMock && process.env.NODE_ENV === 'production') {
-                res.status(401).send('Unauthorized: Missing signature');
+            console.warn(`[Webhook] Missing signature from IP: ${ip}`);
+
+            // In production, we MUST reject requests without signatures
+            if (process.env.NODE_ENV === 'production') {
+                res.status(401).json({ error: 'Unauthorized: Missing signature' });
                 return;
             }
-            // In mock/development mode, allow missing signature for easier testing
-        }
+            // In development, we allow it for easier testing, but log a warning
+            console.info('[Webhook] Production mode is OFF; skipping signature requirement');
+        } else {
+            // Verify the signature using the request body and the secure key
+            // We pass req.body as the params for the HMAC calculation
+            const isValid = verifySecureHash(req.body, signature as string, amwalConfig.secureKey);
 
-        // TODO: Implement full signature verification once Amwal provides the exact method
-        // Example:
-        // const isValid = verifyAmwalSignature(req.body, signature as string, process.env.AMWAL_WEBHOOK_SECRET!);
-        // if (!isValid && !amwalConfig.useMock) {
-        //     res.status(401).send('Invalid signature');
-        //     return;
-        // }
+            if (!isValid) {
+                console.warn(`[Webhook] Invalid signature detected from IP: ${ip}`);
+
+                if (process.env.NODE_ENV === 'production') {
+                    res.status(401).json({ error: 'Unauthorized: Invalid signature' });
+                    return;
+                }
+                console.info('[Webhook] Production mode is OFF; ignoring invalid signature');
+            } else {
+                console.info(`[Webhook] Signature verified successfully for IP: ${ip}`);
+            }
+        }
 
         next();
     } catch (error) {
-        console.error('[WebhookAuth] Error processing middleware:', error);
-
-        // Fail open in development, fail closed in production
-        if (process.env.NODE_ENV === 'production' && !amwalConfig.useMock) {
-            res.status(401).send('Unauthorized');
-            return;
-        }
-
-        next(error);
+        console.error('[Webhook Auth] Critical error during signature verification:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 };

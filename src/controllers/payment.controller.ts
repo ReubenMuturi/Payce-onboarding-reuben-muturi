@@ -1,42 +1,29 @@
 // src/controllers/payment.controller.ts
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import { AmwalPayService } from '../services/payment/AmwalPayService';
+import { z } from 'zod';
+import { PaymentError } from '../types/payment.types';
+
+const InitiatePaymentSchema = z.object({
+    billId: z.string().uuid('billId must be a valid UUID'),
+    amount: z.number().positive('amount must be greater than 0'),
+    userId: z.string().optional(),
+});
 
 export class PaymentController {
-    private amwalService: AmwalPayService;
-
-    constructor() {
-        this.amwalService = new AmwalPayService();
-    }
+    private amwalService = new AmwalPayService();
 
     /**
-     * Initiate Payment - Called from frontend when customer clicks "Pay"
+     * Initiate Payment - Called by frontend when customer clicks "Pay"
      */
     initiatePayment = async (req: Request, res: Response): Promise<void> => {
         try {
-            const { billId, amount, userId } = req.body;
-
-            if (!billId || typeof billId !== 'string') {
-                res.status(400).json({
-                    success: false,
-                    error: 'Valid billId is required',
-                });
-                return;
-            }
-
-            const numericAmount = Number(amount);
-            if (!amount || isNaN(numericAmount) || numericAmount <= 0) {
-                res.status(400).json({
-                    success: false,
-                    error: 'Valid positive amount is required',
-                });
-                return;
-            }
+            const validated = InitiatePaymentSchema.parse(req.body);
 
             const result = await this.amwalService.initiatePayment(
-                billId,
-                numericAmount,
-                userId
+                validated.billId,
+                validated.amount,
+                validated.userId
             );
 
             res.status(200).json({
@@ -44,28 +31,50 @@ export class PaymentController {
                 data: result,
             });
         } catch (error: any) {
-            const statusCode = error.message?.includes('already been fully paid') ? 409 : 500;
+            if (error.name === 'ZodError') {
+                res.status(400).json({
+                    success: false,
+                    error: 'Validation failed',
+                    details: error.errors,
+                });
+                return;
+            }
 
-            res.status(statusCode).json({
+            // Handle Custom Payment Errors
+            if (error instanceof PaymentError) {
+                res.status(error.statusCode).json({
+                    success: false,
+                    error: error.message,
+                });
+                return;
+            }
+
+            console.error('[PaymentController] Initiate payment failed:', error);
+
+            res.status(500).json({
                 success: false,
-                error: error.message || 'Failed to initiate payment',
+                error: 'Failed to initiate payment. Please try again.',
+                ...(process.env.NODE_ENV === 'development' && { message: error.message }),
             });
         }
     };
 
     /**
      * Handle Amwal Pay Webhook
-     * MUST always return 200 OK to prevent Amwal from retrying indefinitely
+     * IMPORTANT: Always return 200 OK to prevent Amwal from retrying the webhook endlessly.
      */
     handleWebhook = async (req: Request, res: Response): Promise<void> => {
         try {
             await this.amwalService.handleWebhook(req.body);
 
+            // Log success quietly
+            console.info('[Webhook] Processed successfully');
             res.status(200).send('OK');
         } catch (error: any) {
-            // Log internally but always return 200 for webhook
-            console.error('[Webhook Error] Failed to process Amwal webhook:', error.message);
+            console.error('[Webhook] Processing failed:', error);
 
+            // CRITICAL: Always return 200 for webhooks even on error
+            // This tells the gateway "we received it" and stops retries
             res.status(200).send('OK');
         }
     };

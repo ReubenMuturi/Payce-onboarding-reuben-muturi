@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { loyverseController } from '../controllers/loyverse.controller';
+import { loyverseWebhookAuthMiddleware } from '../middleware/loyverseWebhookAuth';
 
 const router = Router();
 
@@ -18,6 +19,6 @@ router.get('/menu', menuRateLimiter, loyverseController.getMenu);
 
 router.post('/loyverse/sync', loyverseController.syncMenu);
 
-router.post('/webhooks/loyverse', loyverseController.handleWebhook);
+router.post('/webhooks/loyverse', loyverseWebhookAuthMiddleware, loyverseController.handleWebhook);
 
 export default router;

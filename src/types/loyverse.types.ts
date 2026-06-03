@@ -1,41 +1,27 @@
-export interface LoyverseItem {
-    id: string;
-    item_name: string;
-    handle?: string;
-    category_id?: string;
-    image_url?: string;
-    color?: string;
-    track_stock?: boolean;
-    is_composite?: boolean;
-    created_at?: string;
-    updated_at?: string;
-    deleted_at?: string;
-    variants?: LoyverseVariant[];
-}
+import { z } from 'zod';
+import {
+    LoyverseItemSchema,
+    LoyverseVariantSchema,
+    LoyverseCategorySchema
+} from './loyverse.schemas';
 
-export interface LoyverseVariant {
-    variant_id: string;
-    item_id: string;
-    sku?: string;
-    barcode?: string;
-    option1_value?: string;
-    option2_value?: string;
-    option3_value?: string;
-    default_price?: number;
-    cost?: number;
-    created_at?: string;
-    updated_at?: string;
-    deleted_at?: string;
-}
+// --- Pure API Types (What we get from Loyverse) ---
+export type LoyverseItemApi = z.infer<typeof LoyverseItemSchema>;
+export type LoyverseVariantApi = z.infer<typeof LoyverseVariantSchema>;
+export type LoyverseCategoryApi = z.infer<typeof LoyverseCategorySchema>;
 
-export interface LoyverseCategory {
-    id: string;
-    name: string;
-    handle?: string;
-    sort_order?: number;
-    created_at?: string;
-    updated_at?: string;
-}
+// --- Merchant-Scoped Types (What we store in our DB) ---
+export type LoyverseItem = LoyverseItemApi & {
+    merchant_id: string;
+};
+
+export type LoyverseVariant = LoyverseVariantApi & {
+    merchant_id: string;
+};
+
+export type LoyverseCategory = LoyverseCategoryApi & {
+    merchant_id: string;
+};
 
 export interface SyncResult {
     success: boolean;

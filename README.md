@@ -1,7 +1,7 @@
 # payce-onboarding-reuben-muturi
 Payce Developer Onboarding Repository
 
-## 🛠 Loyverse Data Management
+## Loyverse Data Management
 This component handles the synchronization of POS data (Categories, Items, Variants) from Loyverse to a multi-tenant Supabase database.
 
 ###  How to Run & Test

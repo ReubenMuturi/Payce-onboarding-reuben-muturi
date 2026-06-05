@@ -1,6 +1,6 @@
 {
   "name": "payce-backend",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Payce Backend - QR Payment System",
   "main": "dist/server.js",
   "scripts": {

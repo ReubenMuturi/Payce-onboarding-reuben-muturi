@@ -6,59 +6,98 @@ import {
     LoyverseCategorySingleResponseSchema
 } from '../types/loyverse.schemas';
 import { LoyverseItemApi, LoyverseCategoryApi } from '../types/loyverse.types';
+import { loyverseConfig } from '../config/loyverse';
 
 dotenv.config();
 
-const BASE_URL = 'https://api.loyverse.com/v1.0';
-
 export class LoyverseClient {
-    private baseUrl: string = BASE_URL;
-    private MAX_PAGES = 50; // Safety circuit breaker to prevent infinite loops
+    private baseUrl: string = loyverseConfig.apiBaseUrl;
 
     /**
-     * Core request handler
-     * Now supports optional cursor for pagination
+     * Helper to sleep for a given duration
+     */
+    private sleep(ms: number) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    /**
+     * Core request handler with exponential back-off and rate-limit handling.
      */
     private async request<T>(endpoint: string, apiToken: string, cursor?: string | null): Promise<T> {
         const url = new URL(`${this.baseUrl}${endpoint}`);
-
         if (cursor) {
             url.searchParams.append('cursor', cursor);
         }
 
-        const response = await fetch(url.toString(), {
-            method: 'GET',
-            headers: {
-                Authorization: `Bearer ${apiToken}`,
-                'Content-Type': 'application/json',
-            },
-        });
+        let attempt = 0;
+        const maxAttempts = loyverseConfig.maxRetryAttempts;
+        const baseDelay = loyverseConfig.retryBaseMs;
 
-        if (!response.ok) {
+        while (true) {
+            attempt++;
+            const response = await fetch(url.toString(), {
+                method: 'GET',
+                headers: {
+                    Authorization: `Bearer ${apiToken}`,
+                    'Content-Type': 'application/json',
+                },
+            });
+
+            if (response.ok) {
+                return response.json();
+            }
+
+            if (attempt >= maxAttempts) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(`Loyverse API Error (${response.status}) after ${maxAttempts} attempts: ${JSON.stringify(errorData)}`);
+            }
+
+            // Handle Rate Limiting (429)
+            if (response.status === 429) {
+                const retryAfter = response.headers.get('Retry-After');
+                const delay = retryAfter
+                    ? parseInt(retryAfter, 10) * 1000
+                    : (baseDelay * Math.pow(2, attempt - 1)) + Math.random() * 100;
+
+                console.warn(`[LoyverseClient] Rate limited (429). Retrying in ${delay}ms... (Attempt ${attempt}/${maxAttempts})`);
+                await this.sleep(delay);
+                continue;
+            }
+
+            // Handle Transient Errors (5xx)
+            if (response.status >= 500) {
+                const delay = (baseDelay * Math.pow(2, attempt - 1)) + Math.random() * 100;
+                console.warn(`[LoyverseClient] Server error (${response.status}). Retrying in ${delay}ms... (Attempt ${attempt}/${maxAttempts})`);
+                await this.sleep(delay);
+                continue;
+            }
+
+            // Non-retryable errors (4xx except 429)
             const errorData = await response.json().catch(() => ({}));
             throw new Error(`Loyverse API Error (${response.status}): ${JSON.stringify(errorData)}`);
         }
-
-        return response.json();
     }
 
-    async getAllItems(apiToken: string): Promise<LoyverseItemApi[]> {
+    async getAllItems(apiToken: string, updatedAt?: string): Promise<LoyverseItemApi[]> {
         let allItems: LoyverseItemApi[] = [];
         let cursor: string | null | undefined = undefined;
         let pageCount = 0;
 
         do {
             pageCount++;
-            if (pageCount > this.MAX_PAGES) {
-                console.warn(`[LoyverseClient] Max page limit reached (${this.MAX_PAGES}). Some items may be missing.`);
+            if (pageCount > loyverseConfig.maxPages) {
+                console.warn(`[LoyverseClient] Max page limit reached (${loyverseConfig.maxPages}). Some items may be missing.`);
                 break;
             }
 
-            const rawData = await this.request<any>('/items?limit=200', apiToken, cursor);
+            const queryParams = new URLSearchParams({ limit: '200' });
+            if (updatedAt) {
+                queryParams.append('updated_at', updatedAt);
+            }
 
-            // RUNTIME VALIDATION: Ensure the API response matches our contract
+            const rawData = await this.request<any>(`/items?${queryParams.toString()}`, apiToken, cursor);
+
             const result = LoyverseItemsResponseSchema.safeParse(rawData);
-
             if (!result.success) {
                 console.error(`[LoyverseClient] API Contract Violation in /items:`, result.error.format());
                 throw new Error(`Loyverse API response failed validation: ${result.error.message}`);
@@ -74,23 +113,26 @@ export class LoyverseClient {
         return allItems;
     }
 
-    async getCategories(apiToken: string): Promise<LoyverseCategoryApi[]> {
+    async getCategories(apiToken: string, updatedAt?: string): Promise<LoyverseCategoryApi[]> {
         let allCategories: LoyverseCategoryApi[] = [];
         let cursor: string | null | undefined = undefined;
         let pageCount = 0;
 
         do {
             pageCount++;
-            if (pageCount > this.MAX_PAGES) {
-                console.warn(`[LoyverseClient] Max page limit reached (${this.MAX_PAGES}). Some categories may be missing.`);
+            if (pageCount > loyverseConfig.maxPages) {
+                console.warn(`[LoyverseClient] Max page limit reached (${loyverseConfig.maxPages}). Some categories may be missing.`);
                 break;
             }
 
-            const rawData = await this.request<any>('/categories?limit=100', apiToken, cursor);
+            const queryParams = new URLSearchParams({ limit: '100' });
+            if (updatedAt) {
+                queryParams.append('updated_at', updatedAt);
+            }
 
-            // RUNTIME VALIDATION: Ensure the API response matches our contract
+            const rawData = await this.request<any>(`/categories?${queryParams.toString()}`, apiToken, cursor);
+
             const result = LoyverseCategoriesResponseSchema.safeParse(rawData);
-
             if (!result.success) {
                 console.error(`[LoyverseClient] API Contract Violation in /categories:`, result.error.format());
                 throw new Error(`Loyverse API response failed validation: ${result.error.message}`);

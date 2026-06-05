@@ -4,6 +4,8 @@ import dotenv from 'dotenv';
 
 import loyverseRoutes from './routes/loyverse.routes';
 import { loyverseSyncJob } from './jobs/loyverseSync.job';
+import { loyverseDebounceProcessor } from './jobs/loyverseDebounceProcessor.job';
+
 
 dotenv.config();
 
@@ -43,4 +45,6 @@ app.listen(PORT, () => {
 
     // Start automatic Loyverse menu sync job
     loyverseSyncJob.start();
+    loyverseDebounceProcessor.start();
+
 });

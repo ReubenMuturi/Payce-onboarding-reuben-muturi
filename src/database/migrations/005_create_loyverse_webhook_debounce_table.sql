@@ -5,7 +5,7 @@
 
 CREATE TABLE IF NOT EXISTS loyverse_webhook_debounce (
     merchant_id UUID NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
-    resource_ids UUID[] NOT NULL DEFAULT '{}',
+    resource_ids TEXT[] NOT NULL DEFAULT '{}',
     expires_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (merchant_id)
 );

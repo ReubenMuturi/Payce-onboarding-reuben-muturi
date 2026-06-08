@@ -1,7 +1,9 @@
 import cron from 'node-cron';
+import pLimit from 'p-limit';
 import { supabase } from '../config/supabase';
 import { loyverseService } from '../services/loyverse.service';
 import { logger } from '../lib/logger';
+import { loyverseConfig } from '../config/loyverse';
 
 class LoyverseDebounceProcessor {
     private isProcessing = false;
@@ -9,8 +11,8 @@ class LoyverseDebounceProcessor {
     start() {
         logger.info('Loyverse Debounce Processor Job Started');
 
-        // Run every 5 seconds to check for expired windows
-        cron.schedule('*/5 * * * * *', async () => {
+        // Run every N seconds to check for expired windows
+        cron.schedule(`*/${loyverseConfig.debounceProcessorIntervalSeconds} * * * * *`, async () => {
             if (this.isProcessing) return;
 
             try {
@@ -36,25 +38,16 @@ class LoyverseDebounceProcessor {
 
             logger.info({ count: expiredRows.length }, '[Debounce] Found expired windows. Processing...');
 
-            for (const row of expiredRows) {
+            const limit = pLimit(10);
+            await Promise.all(expiredRows.map(row => limit(async () => {
                 const { merchant_id, resource_ids } = row;
-
                 try {
-                    // We delegate the hybrid sync logic (Full vs Targeted) to the service
                     await this.handleDebouncedSync(merchant_id, resource_ids);
-
-                    // Delete the row after successful processing
-                    await supabase
-                        .from('loyverse_webhook_debounce')
-                        .delete()
-                        .eq('merchant_id', merchant_id);
-
+                    await supabase.from('loyverse_webhook_debounce').delete().eq('merchant_id', merchant_id);
                 } catch (syncError: any) {
                     logger.error({ merchantId: merchant_id, err: syncError }, '[Debounce] Failed to process resources for merchant');
-                    // Note: We don't delete the row here so it can be retried in the next tick,
-                    // but in production, you might want to implement a max-retry counter to avoid infinite loops.
                 }
-            }
+            })));
         } finally {
             this.isProcessing = false;
         }
@@ -63,7 +56,7 @@ class LoyverseDebounceProcessor {
     private async handleDebouncedSync(merchantId: string, resourceList: string[]) {
         // HYBRID STRATEGY (matching previous service logic)
         // If many resources changed, a full sync is more efficient.
-        if (resourceList.length > 10) {
+        if (resourceList.length > loyverseConfig.burstThreshold) {
             logger.info({ merchantId, count: resourceList.length }, '[Debounce] Large burst detected. Performing FULL sync...');
             await loyverseService.syncMenu(merchantId);
         } else {

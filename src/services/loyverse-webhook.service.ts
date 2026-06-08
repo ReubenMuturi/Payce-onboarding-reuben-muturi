@@ -1,6 +1,7 @@
 import { supabase } from '../config/supabase';
 import { loyverseService } from './loyverse.service';
 import { logger } from '../lib/logger';
+import { loyverseConfig } from '../config/loyverse';
 
 interface WebhookPayload {
     event_type?: string;
@@ -27,7 +28,7 @@ export class LoyverseWebhookService {
 
         try {
             // 1. Log webhook for auditing (Immediate)
-            const { error: logError } = await supabase
+            const { data: logData, error: logError } = await supabase
                 .from('loyverse_webhooks')
                 .insert({
                     merchant_id: merchantId,
@@ -36,23 +37,21 @@ export class LoyverseWebhookService {
                     payload: payload,
                     processed: false,
                     created_at: new Date().toISOString()
-                });
+                })
+                .select()
+                .single();
 
             if (logError) {
                 logger.error({ err: logError }, 'Failed to log webhook to database');
             }
 
-            // 2. Filter for menu-related events
-            const menuRelatedEvents = [
-                'item.created', 'item.updated', 'item.deleted',
-                'variant.created', 'variant.updated', 'variant.deleted',
-                'category.created', 'category.updated'
-            ];
+            const webhookId = logData?.id;
 
-            const isMenuEvent = menuRelatedEvents.includes(eventType) ||
-                eventType.includes('item') ||
-                eventType.includes('variant') ||
-                eventType.includes('category');
+            // 2. Filter for menu-related events
+            const MENU_RESOURCE_TYPES = new Set(['item', 'variant', 'category']);
+
+            const isMenuEvent = MENU_RESOURCE_TYPES.has(eventType.split('.')[0]) ||
+                MENU_RESOURCE_TYPES.has(eventType);
 
             if (!isMenuEvent) {
                 logger.info({ merchantId, eventType }, 'Unhandled event type: event ignored');
@@ -74,12 +73,19 @@ export class LoyverseWebhookService {
                 const { error: debounceError } = await supabase.rpc('append_resource_to_debounce', {
                     p_merchant_id: merchantId,
                     p_resource_id: resourceId,
-                    p_expires_in_seconds: 5
+                    p_expires_in_seconds: Math.floor(loyverseConfig.debounceMs / 1000)
                 });
 
                 if (debounceError) {
                     logger.error({ merchantId, resourceId, err: debounceError }, 'Failed to buffer resource');
                 }
+            }
+
+            if (webhookId) {
+                await supabase
+                    .from('loyverse_webhooks')
+                    .update({ processed: true })
+                    .eq('id', webhookId);
             }
 
             return {

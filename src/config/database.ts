@@ -1,4 +1,5 @@
 // src/config/database.ts
+import { logger } from '../lib/logger';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 
@@ -24,9 +25,9 @@ try {
         },
     });
 } catch (error: any) {
-    console.error('Supabase Configuration Error:');
-    console.error(error.message);
-    console.error('\nPlease check your .env file and ensure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are correctly set.');
+    logger.error('Supabase Configuration Error:');
+    logger.error(error.message);
+    logger.error('\nPlease check your .env file and ensure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are correctly set.');
     process.exit(1);
 }
 
@@ -42,9 +43,9 @@ export const testDatabaseConnection = async (): Promise<void> => {
 
         if (error) throw error;
 
-        console.log('Supabase connected successfully');
+        logger.info('Supabase connected successfully');
     } catch (err: any) {
-        console.error('Supabase connection test failed:', err.message);
+        logger.error({ err: err.message }, 'Supabase connection test failed');
         throw err;
     }
 };

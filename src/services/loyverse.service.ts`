@@ -3,8 +3,6 @@ import { LoyverseClient } from '../lib/loyverse.client';
 import { LoyverseItem, LoyverseCategory, LoyverseItemApi, LoyverseCategoryApi, SyncResult } from '../types/loyverse.types';
 import pLimit from 'p-limit';
 import { logger } from '../lib/logger';
-import { decrypt, encrypt } from '../utils/crypto';
-import { loyverseConfig } from '../config/loyverse';
 
 export class LoyverseService {
     private client: LoyverseClient;
@@ -14,8 +12,7 @@ export class LoyverseService {
     }
 
     /**
-     * Helper to retrieve an active merchant's token and sync metadata.
-     * Implements lazy migration for Token Encryption at Rest.
+     * Helper to retrieve an active merchant's token and sync metadata
      */
     private async getMerchantSyncInfo(merchantId: string) {
         const { data, error } = await supabase
@@ -32,52 +29,12 @@ export class LoyverseService {
             throw new Error(`Merchant ${merchantId} is currently ${data.status}. Access denied.`);
         }
 
-        let token = data.api_token;
-        const encryptionKey = process.env.SENSITIVE_DATA_ENCRYPTION_KEY;
-
-        if (!token) {
-            throw new Error(`API token missing for merchant ${merchantId}`);
-        }
-
-        // Encryption Logic: Lazy Migration
-        if (encryptionKey) {
-            try {
-                // Try to decrypt. If it fails, it's likely plaintext.
-                token = decrypt(token, encryptionKey);
-                logger.info({ merchantId }, 'Successfully decrypted merchant API token');
-            } catch (err) {
-                // Decryption failed: Treat as plaintext and migrate to encrypted
-                logger.info({ merchantId }, 'Token is plaintext; migrating to encrypted storage');
-                try {
-                    const encryptedToken = encrypt(token, encryptionKey);
-                    await supabase
-                        .from('merchants')
-                        .update({ api_token: encryptedToken })
-                        .eq('id', merchantId);
-
-                    logger.info({ merchantId }, 'Merchant token successfully encrypted and saved');
-                } catch (encryptError: any) {
-                    logger.error({ merchantId, err: encryptError.message }, 'Failed to encrypt merchant token during lazy migration');
-                    // We don't throw here so the sync can still proceed with the plaintext token
-                }
-            }
-        } else {
-            logger.warn('SENSITIVE_DATA_ENCRYPTION_KEY not found in env. Tokens remain in plaintext.');
-        }
-
         return {
-            token,
+            token: data.api_token,
             lastSyncedAt: data.last_synced_at
         };
     }
 
-    /**
-     * Fetches all items for a merchant and maps them to the internal LoyverseItem format.
-     *
-     * @param merchantId The unique ID of the merchant
-     * @param updatedAt Optional timestamp for differential synchronization
-     * @returns A promise resolving to the list of items for the merchant
-     */
     async getAllItems(merchantId: string, updatedAt?: string): Promise<LoyverseItem[]> {
         const { token } = await this.getMerchantSyncInfo(merchantId);
         const items = await this.client.getAllItems(token, updatedAt);
@@ -88,13 +45,6 @@ export class LoyverseService {
         }));
     }
 
-    /**
-     * Fetches all categories for a merchant and maps them to the internal LoyverseCategory format.
-     *
-     * @param merchantId The unique ID of the merchant
-     * @param updatedAt Optional timestamp for differential synchronization
-     * @returns A promise resolving to the list of categories for the merchant
-     */
     async getCategories(merchantId: string, updatedAt?: string): Promise<LoyverseCategory[]> {
         const { token } = await this.getMerchantSyncInfo(merchantId);
         const categories = await this.client.getCategories(token, updatedAt);
@@ -119,8 +69,8 @@ export class LoyverseService {
         }));
 
         // Chunked Upsert
-        const limit = pLimit(loyverseConfig.dbWriteConcurrency);
-        const chunkSize = loyverseConfig.dbBatchSize;
+        const limit = pLimit(3);
+        const chunkSize = 100;
         const chunks = Array.from({ length: Math.ceil(categoriesData.length / chunkSize) }, (_, i) =>
             categoriesData.slice(i * chunkSize, (i + 1) * chunkSize)
         );
@@ -175,8 +125,8 @@ export class LoyverseService {
             }))
         );
 
-        const limit = pLimit(loyverseConfig.dbWriteConcurrency);
-        const chunkSize = loyverseConfig.dbBatchSize;
+        const limit = pLimit(3);
+        const chunkSize = 100;
 
         // Batch Upsert Items
         const itemChunks = Array.from({ length: Math.ceil(itemsData.length / chunkSize) }, (_, i) =>
@@ -204,21 +154,6 @@ export class LoyverseService {
         try {
             const { token } = await this.getMerchantSyncInfo(merchantId);
             const itemApi = await this.client.getItem(token, itemId);
-
-            // Pre-flight Category Check: Ensure the category exists before updating the item
-            if (itemApi.category_id) {
-                const { data: category } = await supabase
-                    .from('loyverse_categories')
-                    .select('id')
-                    .eq('merchant_id', merchantId)
-                    .eq('id', itemApi.category_id)
-                    .single();
-
-                if (!category) {
-                    logger.info({ merchantId, categoryId: itemApi.category_id }, '[Sync] Category missing. Triggering targeted category sync...');
-                    await this.syncSingleCategory(merchantId, itemApi.category_id);
-                }
-            }
 
             const item: LoyverseItem = {
                 ...itemApi,
@@ -249,14 +184,6 @@ export class LoyverseService {
         }
     }
 
-    /**
-     * Orchestrates the synchronization of the entire menu (categories and items) for a merchant.
-     * Decides between a FULL sync (if never synced or > 24h ago) or a DELTA sync.
-     *
-     * @param merchantId The unique ID of the merchant to sync
-     * @returns A SyncResult containing the number of processed records and timestamp
-     * @throws Error if the synchronization process fails
-     */
     async syncMenu(merchantId: string): Promise<SyncResult> {
         const { token, lastSyncedAt } = await this.getMerchantSyncInfo(merchantId);
 
@@ -270,8 +197,7 @@ export class LoyverseService {
             isFullSync = true;
         } else {
             const lastSyncDate = new Date(lastSyncedAt);
-            const thresholdMs = loyverseConfig.fullSyncThresholdHours * 60 * 60 * 1000;
-            const twentyFourHoursAgo = new Date(Date.now() - thresholdMs);
+            const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
             if (lastSyncDate < twentyFourHoursAgo) {
                 isFullSync = true;
             } else {
@@ -281,7 +207,6 @@ export class LoyverseService {
 
         logger.info({ merchantId, mode: isFullSync ? 'FULL' : 'DELTA', updatedAt }, 'Starting Loyverse Menu Sync');
 
-        const startTime = Date.now();
         try {
             const [items, categories] = await Promise.all([
                 this.getAllItems(merchantId, updatedAt),
@@ -305,18 +230,6 @@ export class LoyverseService {
                 logger.error({ merchantId, err: syncError }, 'Error updating sync metadata');
             }
 
-            const duration = Date.now() - startTime;
-
-            // Emit Sync Metrics
-            await supabase.from('sync_metrics').insert({
-                merchant_id: merchantId,
-                sync_type: isFullSync ? 'FULL' : 'DELTA',
-                items_synced: items.length,
-                categories_synced: categories.length,
-                duration_ms: duration,
-                status: 'SUCCESS'
-            });
-
             return {
                 success: true,
                 itemsCount: items.length,
@@ -324,17 +237,6 @@ export class LoyverseService {
                 syncedAt: new Date().toISOString()
             };
         } catch (error: any) {
-            const duration = Date.now() - startTime;
-
-            // Emit Failure Metric
-            await supabase.from('sync_metrics').insert({
-                merchant_id: merchantId,
-                sync_type: isFullSync ? 'FULL' : 'DELTA',
-                duration_ms: duration,
-                status: 'FAILED',
-                error_message: error.message
-            });
-
             logger.error({ merchantId, err: error.message }, 'Loyverse Sync failed');
             throw error;
         }

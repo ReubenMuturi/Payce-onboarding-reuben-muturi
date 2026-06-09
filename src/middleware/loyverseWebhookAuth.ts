@@ -2,6 +2,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { supabase } from '../config/supabase';
 import crypto from 'crypto';
+import { logger } from '../lib/logger';
 
 /**
  * Webhook Authentication Middleware for Loyverse
@@ -17,7 +18,7 @@ export const loyverseWebhookAuthMiddleware = async (
         const merchantId = req.headers['x-merchant-id'] as string || req.query.merchantId as string;
 
         if (!merchantId) {
-            console.warn('[Loyverse Auth] Webhook received without merchantId');
+            logger.warn('[Loyverse Auth] Webhook received without merchantId');
             // We allow it to pass to the controller which will handle the 200 response
             // to stop Loyverse retries, but it will eventually fail processing.
             return next();
@@ -31,7 +32,7 @@ export const loyverseWebhookAuthMiddleware = async (
             .single();
 
         if (error || !merchant) {
-            console.error(`[Loyverse Auth] Merchant ${merchantId} not found or error fetching secret`);
+            logger.error({ merchantId, err: error }, `[Loyverse Auth] Merchant ${merchantId} not found or error fetching secret`);
             if (process.env.NODE_ENV === 'production') {
                 res.status(401).json({ error: 'Unauthorized: Merchant not found' });
                 return;
@@ -43,7 +44,7 @@ export const loyverseWebhookAuthMiddleware = async (
 
         // If no secret is configured for this merchant, we can't verify the signature
         if (!secret) {
-            console.warn(`[Loyverse Auth] No webhook secret configured for merchant ${merchantId}`);
+            logger.warn({ merchantId }, `[Loyverse Auth] No webhook secret configured for merchant ${merchantId}`);
             if (process.env.NODE_ENV === 'production') {
                 res.status(401).json({ error: 'Unauthorized: Secret not configured' });
                 return;
@@ -56,7 +57,7 @@ export const loyverseWebhookAuthMiddleware = async (
         const signature = req.headers['x-loyverse-signature'] as string || req.headers['signature'] as string;
 
         if (!signature) {
-            console.warn(`[Loyverse Auth] Missing signature for merchant ${merchantId}`);
+            logger.warn({ merchantId }, `[Loyverse Auth] Missing signature for merchant ${merchantId}`);
             if (process.env.NODE_ENV === 'production') {
                 res.status(401).json({ error: 'Unauthorized: Missing signature' });
                 return;
@@ -65,16 +66,18 @@ export const loyverseWebhookAuthMiddleware = async (
         }
 
         // Verify using HMAC-SHA256 of the raw body
-        // Note: This assumes the body is available. In a production setup with express.json(),
-        // you might need a custom body-parser to keep the raw buffer for verification.
-        const bodyString = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+        // Use rawBody captured in server.ts to ensure byte-for-byte accuracy
+        const bodyString = (req as any).rawBody
+            ? (req as any).rawBody.toString('utf8')
+            : JSON.stringify(req.body);
+
         const expectedSignature = crypto
             .createHmac('sha256', secret)
             .update(bodyString)
             .digest('hex');
 
         if (signature !== expectedSignature) {
-            console.warn(`[Loyverse Auth] Invalid signature detected for merchant ${merchantId}`);
+            logger.warn({ merchantId }, `[Loyverse Auth] Invalid signature detected for merchant ${merchantId}`);
             if (process.env.NODE_ENV === 'production') {
                 res.status(401).json({ error: 'Unauthorized: Invalid signature' });
                 return;
@@ -82,10 +85,10 @@ export const loyverseWebhookAuthMiddleware = async (
             return next();
         }
 
-        console.info(`[Loyverse Auth] Webhook verified successfully for merchant ${merchantId}`);
+        logger.info({ merchantId }, `[Loyverse Auth] Webhook verified successfully for merchant ${merchantId}`);
         next();
     } catch (error) {
-        console.error('[Loyverse Auth] Critical error during signature verification:', error);
+        logger.error({ err: error }, '[Loyverse Auth] Critical error during signature verification');
         res.status(500).json({ error: 'Internal server error' });
     }
 };

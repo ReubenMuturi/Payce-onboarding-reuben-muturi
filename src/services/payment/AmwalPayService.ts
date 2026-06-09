@@ -225,7 +225,7 @@ export class AmwalPayService implements IPaymentService {
 
 // Background Job Scheduler
 export const startReconciliationJob = () => {
-    console.log('Amwal reconciliation job scheduler started');
+    logger.info('Amwal reconciliation job scheduler started');
 
     const service = new AmwalPayService();
 
@@ -234,6 +234,6 @@ export const startReconciliationJob = () => {
 
     // Run every 5 minutes
     setInterval(() => {
-        service.reconcileStuckPayments().catch(console.error);
+        service.reconcileStuckPayments().catch(err => logger.error({ err }, 'Critical failure in reconciliation job interval'));
     }, 5 * 60 * 1000);
 };

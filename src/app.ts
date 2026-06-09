@@ -75,7 +75,7 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
     }
 
     // 3. Generic Internal Server Error
-    console.error('[Global Error]', err);
+    logger.error({ err: err }, '[Global Error]');
 
     res.status(500).json({
         success: false,

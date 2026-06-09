@@ -1,6 +1,9 @@
 import { loyverseService } from './src/services/loyverse.service';
 import { loyverseWebhookService } from './src/services/loyverse-webhook.service';
+import { loyverseDebounceProcessor } from './src/jobs/loyverseDebounceProcessor.job';
+import { loyverseSyncJob } from './src/jobs/loyverseSync.job';
 import { supabase } from './src/config/supabase';
+import { v4 as uuidv4 } from 'uuid';
 
 /**
  * LOYVERSE INTEGRATION TEST SUITE
@@ -8,23 +11,23 @@ import { supabase } from './src/config/supabase';
  * to verify that the backend architecture is working without needing a live tunnel.
  */
 
-async function getTestMerchant() {
-    console.log(' Looking for an active test merchant in database...');
+async function getActiveMerchants() {
+    console.log(' Looking for active test merchants in database...');
     const { data, error } = await supabase
         .from('merchants')
         .select('id, name')
-        .eq('status', 'Active')
-        .single();
+        .eq('status', 'Active');
 
-    if (error || !data) {
-        throw new Error('No active merchant found. Please create one in Supabase first.');
+    if (error || !data || data.length === 0) {
+        throw new Error('No active merchants found. Please create one in Supabase first.');
     }
-    console.log(`Using Merchant: ${data.name} (${data.id})`);
-    return data.id;
+
+    console.log(`Found ${data.length} active merchant(s).`);
+    return data;
 }
 
-async function runFullSyncTest(merchantId: string) {
-    console.log('\n--- Testing FULL MENU SYNC ---');
+async function runFullSyncTest(merchantId: string, merchantName: string) {
+    console.log(`\n--- Testing FULL MENU SYNC for ${merchantName} ---`);
     try {
         const result = await loyverseService.syncMenu(merchantId);
         console.log('Full Sync Success!');
@@ -34,13 +37,34 @@ async function runFullSyncTest(merchantId: string) {
     }
 }
 
-async function runWebhookSimulation(merchantId: string) {
-    console.log('\n--- ⚡ Testing WEBHOOK LIVE UPDATES ---');
+async function runTargetedSyncTest(merchantId: string, merchantName: string) {
+    console.log(`\n--- Testing TARGETED SYNC (FK Race Condition Fix) for ${merchantName} ---`);
+    try {
+        const { data: items } = await supabase
+            .from('loyverse_items')
+            .select('id')
+            .eq('merchant_id', merchantId)
+            .limit(1);
 
-    // We will simulate a burst of 12 updates to trigger the "Full Sync" logic in the debounce service
-    const mockItems = Array.from({ length: 12 }, (_, i) => `item_uuid_${i}`);
+        const itemId = items && items.length > 0 ? items[0].id : uuidv4();
 
-    console.log(`Simulating burst of ${mockItems.length} item updates...`);
+        console.log(`Simulating targeted sync for item: ${itemId}`);
+        await loyverseService.syncSingleItem(merchantId, itemId);
+
+        console.log('Targeted Sync processed without crashing.');
+    } catch (error: any) {
+        console.error('Targeted Sync Test Failed:', error.message);
+    }
+}
+
+async function runWebhookSimulation(merchantId: string, merchantName: string) {
+    console.log(`\n--- ⚡ Testing WEBHOOK LIVE UPDATES for ${merchantName} ---`);
+
+    // Start the processor because it's not running in this standalone script
+    // Note: We only call start() once in main(), not per merchant
+    const mockItems = Array.from({ length: 12 }, () => uuidv4());
+
+    console.log(`Simulating burst of ${mockItems.length} item updates with valid UUIDs...`);
 
     for (const id of mockItems) {
         await loyverseWebhookService.handleWebhook({
@@ -50,26 +74,48 @@ async function runWebhookSimulation(merchantId: string) {
     }
 
     console.log(' All mock events sent to buffer.');
-    console.log(' Waiting 6 seconds for debounce window to expire...');
 
-    // Wait for the setTimeout(..., 5000) in the service to fire
-    await new Promise(resolve => setTimeout(resolve, 6000));
-    console.log(' Debounce window passed. Check logs for "Large burst detected" message.');
+    const waitTime = 10000;
+    console.log(`Waiting ${waitTime/1000} seconds for debounce window to expire...`);
+    await new Promise(resolve => setTimeout(resolve, waitTime));
+
+    const { data, error } = await supabase
+        .from('loyverse_webhook_debounce')
+        .select('id')
+        .eq('merchant_id', merchantId);
+
+    if (error || (data && data.length > 0)) {
+        console.error(' Debounce window failed: Items still remain in the queue.');
+    } else {
+        console.log(' Success: Debounce window passed and queue was processed.');
+    }
 }
 
 async function main() {
     try {
-        const merchantId = await getTestMerchant();
+        const merchants = await getActiveMerchants();
 
-        // Test 1: Full Sync
-        await runFullSyncTest(merchantId);
+        // Start the processor once for the entire test run
+        console.log('Starting Debounce Processor for simulation...');
+        loyverseDebounceProcessor.start();
 
-        // Test 2: Live Webhooks
-        await runWebhookSimulation(merchantId);
+        for (const merchant of merchants) {
+            console.log(`\n==================================================`);
+            console.log(` STARTING TESTS FOR: ${merchant.name} (${merchant.id})`);
+            console.log(`==================================================`);
+
+            // Test 1: Full Sync
+            await runFullSyncTest(merchant.id, merchant.name);
+
+            // Test 2: Targeted Sync / FK Fix
+            await runTargetedSyncTest(merchant.id, merchant.name);
+
+            // Test 3: Live Webhooks
+            await runWebhookSimulation(merchant.id, merchant.name);
+        }
 
         console.log('\n==================================================');
-        console.log(' All Loyverse integration tests completed!');
-        console.log('Check your server logs to see the debounce logic in action.');
+        console.log(' All Loyverse integration tests completed for all merchants!');
         console.log('==================================================');
     } catch (error: any) {
         console.error('\n CRITICAL TEST FAILURE:', error.message);

@@ -50,7 +50,7 @@ export class PaymentController {
                 return;
             }
 
-            console.error('[PaymentController] Initiate payment failed:', error);
+            logger.error({ err: error }, '[PaymentController] Initiate payment failed');
 
             res.status(500).json({
                 success: false,
